@@ -1,0 +1,356 @@
+/* Amendo Innstillinger - Admin CSS */
+
+* { box-sizing: border-box; }
+
+.amendo-wrap {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    max-width: 900px;
+    margin: 20px 20px 40px 0;
+    color: #1a1a1a;
+}
+
+/* Header */
+.amendo-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 2px solid #e5e7eb;
+}
+
+.amendo-header .amendo-logo {
+    font-size: 20px;
+    font-weight: 700;
+    color: #111;
+}
+
+.amendo-notice {
+    background: #d1fae5;
+    color: #065f46;
+    border: 1px solid #6ee7b7;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+/* Tabs */
+.amendo-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid #e5e7eb;
+    padding-bottom: 0;
+}
+
+.amendo-tab {
+    background: none;
+    border: none;
+    padding: 10px 20px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #6b7280;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    border-radius: 4px 4px 0 0;
+    transition: all .15s;
+}
+
+.amendo-tab:hover { color: #111; background: #f9fafb; }
+.amendo-tab.active { color: #111; border-bottom-color: #111; }
+
+/* Panels */
+.amendo-panel { display: none; }
+.amendo-panel.active { display: block; }
+
+/* Card */
+.amendo-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 28px;
+    margin-bottom: 20px;
+}
+
+.amendo-card h2 {
+    font-size: 15px;
+    font-weight: 700;
+    margin: 0 0 4px;
+    color: #111;
+}
+
+.amendo-desc {
+    font-size: 13px;
+    color: #6b7280;
+    margin: 0 0 20px;
+}
+
+/* Fields */
+.amendo-field {
+    margin-bottom: 20px;
+}
+
+.amendo-field label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: #374151;
+    margin-bottom: 7px;
+}
+
+.amendo-field input[type="text"],
+.amendo-field input[type="tel"],
+.amendo-field input[type="email"],
+.amendo-field input[type="time"] {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #111;
+    background: #fff;
+    transition: border-color .15s;
+}
+
+.amendo-field input:focus {
+    outline: none;
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99,102,241,.1);
+}
+
+.field-help {
+    font-size: 11px;
+    color: #9ca3af;
+    margin: 5px 0 0;
+}
+
+/* Color fields */
+.amendo-color-field .color-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.amendo-color-field input[type="color"] {
+    width: 48px;
+    height: 40px;
+    padding: 2px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    cursor: pointer;
+    background: none;
+}
+
+.color-value {
+    font-family: monospace;
+    font-size: 13px;
+    color: #6b7280;
+}
+
+/* Logo upload */
+.amendo-logo-upload {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+#logo-preview {
+    max-height: 60px;
+    max-width: 200px;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 4px;
+}
+
+.logo-placeholder {
+    padding: 12px 20px;
+    border: 2px dashed #d1d5db;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #9ca3af;
+}
+
+/* Grid */
+.amendo-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+/* Avdeling kort */
+.avdeling-kort {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    overflow: hidden;
+}
+
+.avdeling-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: #f9fafb;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.avdeling-navn-tittel {
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.avdeling-body {
+    padding: 20px;
+}
+
+/* Åpningstider */
+.åpningstider-grid {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.åpningstider-header {
+    display: grid;
+    grid-template-columns: 100px 60px 1fr 1fr;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #f3f4f6;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: #6b7280;
+}
+
+.åpningstider-rad {
+    display: grid;
+    grid-template-columns: 100px 60px 1fr 1fr;
+    gap: 8px;
+    padding: 8px 12px;
+    align-items: center;
+    border-top: 1px solid #f3f4f6;
+}
+
+.åpningstider-rad:hover { background: #fafafa; }
+
+.dag-navn {
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.åpningstider-rad input[type="time"] {
+    width: 100%;
+    padding: 5px 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 5px;
+    font-size: 13px;
+}
+
+/* Toggle */
+.toggle {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+}
+
+.toggle input { display: none; }
+
+.toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: #d1d5db;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: .2s;
+}
+
+.toggle-slider:before {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    left: 2px;
+    bottom: 2px;
+    background: #fff;
+    border-radius: 50%;
+    transition: .2s;
+}
+
+.toggle input:checked + .toggle-slider { background: #22c55e; }
+.toggle input:checked + .toggle-slider:before { transform: translateX(16px); }
+
+/* Buttons */
+.amendo-btn-primary {
+    background: #111;
+    color: #fff;
+    border: none;
+    padding: 12px 28px;
+    border-radius: 7px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
+}
+.amendo-btn-primary:hover { background: #333; }
+
+.amendo-btn-secondary {
+    background: #fff;
+    color: #111;
+    border: 1.5px solid #d1d5db;
+    padding: 9px 18px;
+    border-radius: 7px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .15s;
+}
+.amendo-btn-secondary:hover { border-color: #111; }
+
+.amendo-btn-danger {
+    background: #fff;
+    color: #dc2626;
+    border: 1.5px solid #fca5a5;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .15s;
+}
+.amendo-btn-danger:hover { background: #fef2f2; }
+
+/* Footer */
+.amendo-footer {
+    padding: 20px 0;
+    border-top: 1px solid #e5e7eb;
+    margin-top: 8px;
+}
+
+/* Meny */
+.meny-rad {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid #f3f4f6;
+}
+.meny-rad input[type="text"] {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 13px;
+}
+.meny-drag {
+    color: #9ca3af;
+    cursor: grab;
+    font-size: 16px;
+    padding: 0 4px;
+}
