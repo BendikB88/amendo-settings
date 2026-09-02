@@ -354,3 +354,29 @@
     font-size: 16px;
     padding: 0 4px;
 }
+
+/* Stengte perioder */
+.steng-rad {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px solid #f3f4f6;
+    flex-wrap: wrap;
+}
+.steng-rad input[type="text"] {
+    flex: 2;
+    min-width: 140px;
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 13px;
+}
+.steng-rad input[type="date"] {
+    flex: 1;
+    min-width: 120px;
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 13px;
+}

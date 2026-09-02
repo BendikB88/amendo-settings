@@ -25,6 +25,41 @@ add_action('admin_menu', function() {
     );
 });
 
+// Advarsel i wp-admin når avdelinger mangler adresse/åpningstider
+add_action('admin_notices', function() {
+    $screen = get_current_screen();
+    if (!$screen || strpos($screen->id, 'amendo') === false) return;
+    if (!current_user_can('manage_options')) return;
+
+    $avdelinger = json_decode(get_option('amendo_avdelinger', '[]'), true) ?: [];
+    $mangler = [];
+
+    foreach ($avdelinger as $avd) {
+        $navn = $avd['navn'] ?: 'Ukjent avdeling';
+        $feil = [];
+        if (empty($avd['adresse'])) $feil[] = 'adresse';
+        if (empty($avd['telefon'])) $feil[] = 'telefon';
+
+        // Sjekk om åpningstider er standardverdier (alle 09:00-17:00 man-fre)
+        $ant_aapen = 0;
+        foreach ($avd['åpningstider'] ?? [] as $dag => $t) {
+            if (($t['åpen'] ?? '0') === '1') $ant_aapen++;
+        }
+        if ($ant_aapen === 0) $feil[] = 'åpningstider (ingen åpne dager)';
+
+        if (!empty($feil)) {
+            $mangler[] = '<strong>' . esc_html($navn) . '</strong> mangler: ' . implode(', ', $feil);
+        }
+    }
+
+    if (!empty($mangler)) {
+        echo '<div class="notice notice-warning"><p>';
+        echo '<strong>Amendo Innstillinger:</strong> Fyll ut manglende info under <a href="' . admin_url('admin.php?page=amendo-settings#avdelinger') . '">Avdelinger</a>:<br>';
+        echo implode('<br>', $mangler);
+        echo '</p></div>';
+    }
+});
+
 // Admin CSS/JS
 add_action('admin_enqueue_scripts', function($hook) {
     if ($hook !== 'toplevel_page_amendo-settings') return;
@@ -59,6 +94,58 @@ add_action('admin_post_amendo_save_settings', function() {
         update_option('amendo_meny', json_encode($meny));
     }
 
+    // Levering & Henting
+    $levering_fields = ['henting_aktiv','henting_tidsluke','henting_maks_per_tidsluke',
+        'henting_prosesseringstid','henting_cutoff','levering_aktiv','levering_metode',
+        'wolt_api_key','levering_tidsluke','levering_prosesseringstid'];
+    foreach ($levering_fields as $field) {
+        if ($field === 'henting_aktiv' || $field === 'levering_aktiv') {
+            update_option('amendo_' . $field, isset($_POST[$field]) ? '1' : '0');
+        } elseif ($field === 'wolt_api_key') {
+            if (!empty($_POST[$field])) update_option('amendo_wolt_api_key', sanitize_text_field($_POST[$field]));
+        } else {
+            if (isset($_POST[$field])) update_option('amendo_' . $field, sanitize_text_field($_POST[$field]));
+        }
+    }
+    // Ikke-dager for prosesseringstid
+    $ikke_dager = isset($_POST['henting_ikke_dager']) ? array_map('sanitize_text_field', $_POST['henting_ikke_dager']) : [];
+    update_option('amendo_henting_ikke_dager', json_encode($ikke_dager));
+
+    // Stengte perioder
+    if (isset($_POST['stengte_perioder'])) {
+        $perioder = [];
+        foreach ($_POST['stengte_perioder'] as $p) {
+            if (!empty($p['fra']) && !empty($p['til'])) {
+                $perioder[] = [
+                    'label' => sanitize_text_field($p['label'] ?? ''),
+                    'fra'   => sanitize_text_field($p['fra']),
+                    'til'   => sanitize_text_field($p['til']),
+                ];
+            }
+        }
+        update_option('amendo_stengte_perioder', json_encode($perioder));
+    } else {
+        update_option('amendo_stengte_perioder', '[]');
+    }
+
+    // Kategori-regler
+    if (isset($_POST['kategori_regler'])) {
+        $regler = [];
+        foreach ($_POST['kategori_regler'] as $r) {
+            if (!empty($r['kategori_id'])) {
+                $regler[] = [
+                    'kategori_id'      => intval($r['kategori_id']),
+                    'prosesseringstid' => $r['prosesseringstid'] !== '' ? intval($r['prosesseringstid']) : null,
+                    'steng_fra'        => sanitize_text_field($r['steng_fra'] ?? ''),
+                    'steng_til'        => sanitize_text_field($r['steng_til'] ?? ''),
+                ];
+            }
+        }
+        update_option('amendo_kategori_regler', json_encode($regler));
+    } else {
+        update_option('amendo_kategori_regler', '[]');
+    }
+
     // Avdelinger
     if (isset($_POST['avdelinger'])) {
         $avdelinger = [];
@@ -73,11 +160,16 @@ add_action('admin_post_amendo_save_settings', function() {
                 ];
             }
             $avdelinger[] = [
-                'navn'         => sanitize_text_field($avd['navn'] ?? ''),
-                'adresse'      => sanitize_text_field($avd['adresse'] ?? ''),
-                'telefon'      => sanitize_text_field($avd['telefon'] ?? ''),
-                'bilde'        => sanitize_url($avd['bilde'] ?? ''),
-                'åpningstider' => $åpningstider,
+                'navn'             => sanitize_text_field($avd['navn'] ?? ''),
+                'adresse'          => sanitize_text_field($avd['adresse'] ?? ''),
+                'telefon'          => sanitize_text_field($avd['telefon'] ?? ''),
+                'bilde'            => sanitize_url($avd['bilde'] ?? ''),
+                'åpningstider'     => $åpningstider,
+                'henting_aktiv'    => isset($avd['henting_aktiv']) ? '1' : '0',
+                'prosesseringstid' => $avd['prosesseringstid'] !== '' ? intval($avd['prosesseringstid']) : null,
+                'cutoff'           => sanitize_text_field($avd['cutoff'] ?? ''),
+                'tidsluke'         => !empty($avd['tidsluke']) ? intval($avd['tidsluke']) : null,
+                'maks_per_tidsluke'=> !empty($avd['maks_per_tidsluke']) ? intval($avd['maks_per_tidsluke']) : null,
             ];
         }
         update_option('amendo_avdelinger', json_encode($avdelinger));
@@ -89,6 +181,11 @@ add_action('admin_post_amendo_save_settings', function() {
 
 // REST API
 add_action('rest_api_init', function() {
+    register_rest_route('amendo-settings/v1', '/leveringsregler', [
+        'methods'             => 'GET',
+        'callback'            => 'amendo_get_leveringsregler',
+        'permission_callback' => '__return_true',
+    ]);
     register_rest_route('amendo-settings/v1', '/settings', [
         'methods'             => 'GET',
         'callback'            => 'amendo_get_settings',
@@ -120,7 +217,52 @@ add_action('rest_api_init', function() {
             return hash_equals($secret, (string) $header);
         },
     ]);
+    // Helsebygget produkter
+    register_rest_route('amendo-settings/v1', '/helsebygget-produkter', [
+        'methods'             => 'GET',
+        'callback'            => 'amendo_get_helsebygget_produkter',
+        'permission_callback' => '__return_true',
+    ]);
+    register_rest_route('amendo-settings/v1', '/helsebygget-produkter', [
+        'methods'             => 'POST',
+        'callback'            => 'amendo_set_helsebygget_produkter',
+        'permission_callback' => function($request) {
+            $secret = get_option('amendo_kasse_secret', '');
+            if (empty($secret)) return true;
+            return hash_equals($secret, (string) $request->get_header('X-Amendo-Secret'));
+        },
+    ]);
 });
+
+function amendo_get_helsebygget_produkter() {
+    $aktive_ids = json_decode(get_option('amendo_helsebygget_produkter', '[]'), true) ?: [];
+
+    // Hent alle produkter med pris, bilde og navn
+    $alle = wc_get_products(['limit' => 200, 'status' => 'publish', 'return' => 'objects']);
+
+    $produkter = array_map(function($p) use ($aktive_ids) {
+        $img = wp_get_attachment_image_url($p->get_image_id(), 'medium') ?: '';
+        return [
+            'id'     => $p->get_id(),
+            'navn'   => $p->get_name(),
+            'pris'   => $p->get_price(),
+            'bilde'  => $img,
+            'aktiv'  => in_array($p->get_id(), $aktive_ids),
+        ];
+    }, $alle);
+
+    return new WP_REST_Response([
+        'produkter'  => $produkter,
+        'aktive_ids' => $aktive_ids,
+    ], 200);
+}
+
+function amendo_set_helsebygget_produkter($request) {
+    $body = $request->get_json_params();
+    $ids  = array_map('intval', $body['aktive_ids'] ?? []);
+    update_option('amendo_helsebygget_produkter', json_encode($ids));
+    return new WP_REST_Response(['ok' => true, 'aktive' => count($ids)], 200);
+}
 
 function amendo_gateway_redirect($request) {
     $body       = $request->get_json_params();
@@ -223,6 +365,49 @@ function amendo_create_adyen_session($request) {
         'sessionData' => $session_data,
         'clientKey'   => $client_key,
         'environment' => $environment,
+    ], 200);
+}
+
+function amendo_get_leveringsregler() {
+    // Globale innstillinger
+    $global_prosesseringstid  = intval(get_option('amendo_henting_prosesseringstid', 2));
+    $global_cutoff            = get_option('amendo_henting_cutoff', '10:00');
+    $global_tidsluke          = intval(get_option('amendo_henting_tidsluke', 60));
+    $global_maks              = intval(get_option('amendo_henting_maks_per_tidsluke', 10));
+    $ikke_dager               = json_decode(get_option('amendo_henting_ikke_dager', '["lørdag","søndag"]'), true) ?: ['lørdag','søndag'];
+    $stengte                  = json_decode(get_option('amendo_stengte_perioder', '[]'), true) ?: [];
+    $kat_regler               = json_decode(get_option('amendo_kategori_regler', '[]'), true) ?: [];
+    $avdelinger_raw           = json_decode(get_option('amendo_avdelinger', '[]'), true) ?: [];
+
+    // Løs opp avdelinger med global fallback
+    $avdelinger = array_map(function($avd) use ($global_prosesseringstid, $global_cutoff, $global_tidsluke, $global_maks) {
+        return array_merge($avd, [
+            'prosesseringstid_resolved' => $avd['prosesseringstid'] ?? $global_prosesseringstid,
+            'cutoff_resolved'           => !empty($avd['cutoff']) ? $avd['cutoff'] : $global_cutoff,
+            'tidsluke_resolved'         => $avd['tidsluke'] ?? $global_tidsluke,
+            'maks_per_tidsluke_resolved'=> $avd['maks_per_tidsluke'] ?? $global_maks,
+        ]);
+    }, $avdelinger_raw);
+
+    return new WP_REST_Response([
+        'global' => [
+            'henting_aktiv'      => get_option('amendo_henting_aktiv', '1') === '1',
+            'prosesseringstid'   => $global_prosesseringstid,
+            'cutoff'             => $global_cutoff,
+            'tidsluke_minutter'  => $global_tidsluke,
+            'maks_per_tidsluke'  => $global_maks,
+            'ikke_dager'         => $ikke_dager,
+            'stengte_perioder'   => $stengte,
+        ],
+        'levering' => [
+            'aktiv'              => get_option('amendo_levering_aktiv', '0') === '1',
+            'metode'             => get_option('amendo_levering_metode', 'wolt'),
+            'tidsluke_minutter'  => intval(get_option('amendo_levering_tidsluke', 60)),
+            'prosesseringstid'   => intval(get_option('amendo_levering_prosesseringstid', 2)),
+            'har_wolt'           => !empty(get_option('amendo_wolt_api_key', '')),
+        ],
+        'kategori_regler' => $kat_regler,
+        'avdelinger'      => $avdelinger,
     ], 200);
 }
 
@@ -339,6 +524,7 @@ function amendo_settings_page() {
                 <button type="button" class="amendo-tab" data-tab="sosiale">📱 Sosiale medier</button>
                 <button type="button" class="amendo-tab" data-tab="meny">🔗 Meny</button>
                 <button type="button" class="amendo-tab" data-tab="avdelinger">📍 Avdelinger</button>
+                <button type="button" class="amendo-tab" data-tab="levering">🚚 Levering & Henting</button>
             </div>
 
             <!-- BUTIKK -->
@@ -504,11 +690,204 @@ function amendo_settings_page() {
                                         <?php endforeach; ?>
                                     </div>
                                 </div>
+
+                                <div class="amendo-field" style="margin-top:20px;padding-top:20px;border-top:1px solid #e5e7eb;">
+                                    <label style="font-size:13px;color:#374151;margin-bottom:12px;display:block;">⚙️ Henting-innstillinger for denne avdelingen</label>
+                                    <p class="amendo-desc" style="margin-bottom:16px;">Overstyrer globale innstillinger. La felter stå tomme for å arve globale verdier.</p>
+                                    <div class="amendo-grid-2">
+                                        <div class="amendo-field">
+                                            <label>Prosesseringstid (virkedager)</label>
+                                            <input type="number" name="avdelinger[<?php echo $i; ?>][prosesseringstid]" value="<?php echo esc_attr($avd['prosesseringstid'] ?? ''); ?>" min="0" max="30" placeholder="Arv global">
+                                            <p class="field-help">Tom = arv global. 0 = samme dag.</p>
+                                        </div>
+                                        <div class="amendo-field">
+                                            <label>Cut-off tid (samme dag)</label>
+                                            <input type="time" name="avdelinger[<?php echo $i; ?>][cutoff]" value="<?php echo esc_attr($avd['cutoff'] ?? '10:00'); ?>">
+                                            <p class="field-help">Bestillinger etter dette tidspunktet teller fra neste dag</p>
+                                        </div>
+                                    </div>
+                                    <div class="amendo-grid-2">
+                                        <div class="amendo-field">
+                                            <label>Tidsluke-lengde (minutter)</label>
+                                            <select name="avdelinger[<?php echo $i; ?>][tidsluke]" style="width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;">
+                                                <?php foreach([15,30,60,120] as $min): ?>
+                                                <option value="<?php echo $min; ?>" <?php selected($avd['tidsluke']??60,$min); ?>><?php echo $min; ?> min</option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </div>
+                                        <div class="amendo-field">
+                                            <label>Maks per tidsluke</label>
+                                            <input type="number" name="avdelinger[<?php echo $i; ?>][maks_per_tidsluke]" value="<?php echo esc_attr($avd['maks_per_tidsluke'] ?? 10); ?>" min="1" max="999">
+                                        </div>
+                                    </div>
+                                    <div class="amendo-field">
+                                        <label>Tillat henting her</label>
+                                        <label class="toggle">
+                                            <input type="checkbox" name="avdelinger[<?php echo $i; ?>][henting_aktiv]" <?php checked($avd['henting_aktiv']??'1','1'); ?>>
+                                            <span class="toggle-slider"></span>
+                                        </label>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                         <?php endforeach; ?>
                     </div>
                     <button type="button" class="amendo-btn-secondary" id="legg-til-avdeling">+ Legg til avdeling</button>
+                </div>
+            </div>
+
+
+            <!-- LEVERING & HENTING -->
+            <div class="amendo-panel" id="tab-levering">
+                <div class="amendo-card">
+                    <h2>Henting (Pickup)</h2>
+                    <p class="amendo-desc">Kunder henter selv i butikken.</p>
+                    <div class="amendo-field">
+                        <label>Tillat henting</label>
+                        <label class="toggle">
+                            <input type="checkbox" name="henting_aktiv" <?php checked(get_option('amendo_henting_aktiv','1'),'1'); ?>>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="amendo-grid-2">
+                        <div class="amendo-field">
+                            <label>Tidsluke-lengde (minutter)</label>
+                            <select name="henting_tidsluke" style="width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;">
+                                <?php foreach([15,30,60,120] as $min): ?>
+                                <option value="<?php echo $min; ?>" <?php selected(get_option('amendo_henting_tidsluke','60'),$min); ?>><?php echo $min; ?> min</option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="amendo-field">
+                            <label>Maks bestillinger per tidsluke</label>
+                            <input type="number" name="henting_maks_per_tidsluke" value="<?php echo esc_attr(get_option('amendo_henting_maks_per_tidsluke','10')); ?>" min="1" max="999">
+                        </div>
+                    </div>
+                    <div class="amendo-grid-2">
+                        <div class="amendo-field">
+                            <label>Prosesseringstid (virkedager)</label>
+                            <input type="number" name="henting_prosesseringstid" value="<?php echo esc_attr(get_option('amendo_henting_prosesseringstid','2')); ?>" min="0" max="30">
+                            <p class="field-help">0 = samme dag mulig</p>
+                        </div>
+                        <div class="amendo-field">
+                            <label>Cut-off tid for samme dag</label>
+                            <input type="time" name="henting_cutoff" value="<?php echo esc_attr(get_option('amendo_henting_cutoff','10:00')); ?>">
+                            <p class="field-help">Bestillinger etter dette tidspunktet teller fra neste dag</p>
+                        </div>
+                    </div>
+                    <div class="amendo-field">
+                        <label>Dager som ikke teller i prosesseringstid</label>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
+                            <?php
+                            $ikke_dager = json_decode(get_option('amendo_henting_ikke_dager','["lørdag","søndag"]'), true) ?: [];
+                            $alle_dager = ['mandag','tirsdag','onsdag','torsdag','fredag','lørdag','søndag'];
+                            foreach ($alle_dager as $dag):
+                            ?>
+                            <label style="display:flex;align-items:center;gap:4px;font-size:13px;font-weight:normal;text-transform:none;letter-spacing:0;">
+                                <input type="checkbox" name="henting_ikke_dager[]" value="<?php echo $dag; ?>" <?php checked(in_array($dag, $ikke_dager)); ?>>
+                                <?php echo ucfirst($dag); ?>
+                            </label>
+                            <?php endforeach; ?>
+                        </div>
+                        <p class="field-help">Typisk lørdag og søndag</p>
+                    </div>
+                    <div class="amendo-field">
+                        <label>Stengte perioder</label>
+                        <div id="stengte-perioder-liste">
+                            <?php
+                            $perioder = json_decode(get_option('amendo_stengte_perioder','[]'), true) ?: [];
+                            foreach ($perioder as $i => $p):
+                            ?>
+                            <div class="steng-rad">
+                                <input type="text" name="stengte_perioder[<?php echo $i; ?>][label]" value="<?php echo esc_attr($p['label']??''); ?>" placeholder="Beskrivelse (f.eks. Sommerferie)">
+                                <input type="date" name="stengte_perioder[<?php echo $i; ?>][fra]" value="<?php echo esc_attr($p['fra']??''); ?>">
+                                <span>→</span>
+                                <input type="date" name="stengte_perioder[<?php echo $i; ?>][til]" value="<?php echo esc_attr($p['til']??''); ?>">
+                                <button type="button" class="slett-periode amendo-btn-danger">Slett</button>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                        <button type="button" class="amendo-btn-secondary" id="legg-til-periode" style="margin-top:8px">+ Legg til periode</button>
+                    </div>
+                </div>
+
+                <div class="amendo-card">
+                    <h2>Levering (Delivery)</h2>
+                    <p class="amendo-desc">Vi leverer til kunden.</p>
+                    <div class="amendo-field">
+                        <label>Tillat levering</label>
+                        <label class="toggle">
+                            <input type="checkbox" name="levering_aktiv" <?php checked(get_option('amendo_levering_aktiv','0'),'1'); ?>>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="amendo-field">
+                        <label>Leveringsmetode</label>
+                        <select name="levering_metode" style="width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;">
+                            <option value="wolt" <?php selected(get_option('amendo_levering_metode','wolt'),'wolt'); ?>>Wolt Drive</option>
+                            <option value="egen" <?php selected(get_option('amendo_levering_metode'),'egen'); ?>>Egen levering</option>
+                            <option value="begge" <?php selected(get_option('amendo_levering_metode'),'begge'); ?>>Begge</option>
+                        </select>
+                    </div>
+                    <div class="amendo-field">
+                        <label>Wolt Drive API-nøkkel</label>
+                        <input type="password" name="wolt_api_key" value="<?php echo esc_attr(get_option('amendo_wolt_api_key','')); ?>" placeholder="wolt_...">
+                    </div>
+                    <div class="amendo-grid-2">
+                        <div class="amendo-field">
+                            <label>Tidsluke-lengde levering (minutter)</label>
+                            <select name="levering_tidsluke" style="width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;">
+                                <?php foreach([30,60,120] as $min): ?>
+                                <option value="<?php echo $min; ?>" <?php selected(get_option('amendo_levering_tidsluke','60'),$min); ?>><?php echo $min; ?> min</option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="amendo-field">
+                            <label>Prosesseringstid levering (virkedager)</label>
+                            <input type="number" name="levering_prosesseringstid" value="<?php echo esc_attr(get_option('amendo_levering_prosesseringstid','2')); ?>" min="0" max="30">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="amendo-card">
+                    <h2>Kategori-overstyringer</h2>
+                    <p class="amendo-desc">Overstyr prosesseringstid eller steng bestilling for spesifikke kategorier i perioder.</p>
+                    <div id="kategori-regler-liste">
+                        <?php
+                        $regler = json_decode(get_option('amendo_kategori_regler','[]'), true) ?: [];
+                        $kategorier = get_terms(['taxonomy'=>'product_cat','hide_empty'=>false,'number'=>100]);
+                        foreach ($regler as $i => $r):
+                        ?>
+                        <div class="kategori-regel-rad" style="border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:12px;">
+                            <div class="amendo-grid-2">
+                                <div class="amendo-field">
+                                    <label>Kategori</label>
+                                    <select name="kategori_regler[<?php echo $i; ?>][kategori_id]" style="width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;">
+                                        <?php foreach($kategorier as $kat): ?>
+                                        <option value="<?php echo $kat->term_id; ?>" <?php selected($r['kategori_id']??'',$kat->term_id); ?>><?php echo esc_html($kat->name); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="amendo-field">
+                                    <label>Prosesseringstid (virkedager, tom = standard)</label>
+                                    <input type="number" name="kategori_regler[<?php echo $i; ?>][prosesseringstid]" value="<?php echo esc_attr($r['prosesseringstid']??''); ?>" min="0" max="30" placeholder="Standard">
+                                </div>
+                            </div>
+                            <div class="amendo-grid-2">
+                                <div class="amendo-field">
+                                    <label>Steng fra dato</label>
+                                    <input type="date" name="kategori_regler[<?php echo $i; ?>][steng_fra]" value="<?php echo esc_attr($r['steng_fra']??''); ?>">
+                                </div>
+                                <div class="amendo-field">
+                                    <label>Steng til dato</label>
+                                    <input type="date" name="kategori_regler[<?php echo $i; ?>][steng_til]" value="<?php echo esc_attr($r['steng_til']??''); ?>">
+                                </div>
+                            </div>
+                            <button type="button" class="slett-kategori-regel amendo-btn-danger">Slett regel</button>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                    <button type="button" class="amendo-btn-secondary" id="legg-til-kategori-regel">+ Legg til regel</button>
                 </div>
             </div>
 
