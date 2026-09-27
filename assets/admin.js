@@ -140,9 +140,11 @@ jQuery(function($) {
             });
         });
     }
-});
 
 // ── Stengte perioder ──
+// ⚠ Denne og kategori-reglene under lå tidligere UTENFOR jQuery-wrapperen. I
+// wp-admin kjører jQuery i noConflict-modus, så `$` var udefinert der og
+// «+ Legg til»-knappene gjorde ingenting.
 var periodeTeller = $('#stengte-perioder-liste .steng-rad').length;
 $('#legg-til-periode').on('click', function() {
     var i = periodeTeller++;
@@ -184,4 +186,66 @@ $('#legg-til-kategori-regel').on('click', function() {
 });
 $(document).on('click', '.slett-kategori-regel', function() {
     $(this).closest('.kategori-regel-rad').remove();
+});
+
+    // ── Forside: repeterbare lister ──
+    // Samme mønster som menyen: legg til en rad, slett en rad, og nummerer
+    // `name`-attributtene på nytt så PHP får en sammenhengende liste. Raden
+    // lages fra en <template> som PHP har rendret — da er markeringen og
+    // escapingen ett sted, ikke kopiert inn i en JS-streng.
+    $(document).on('click', '.amendo-legg-til-rad', function() {
+        var $rep = $(this).closest('.amendo-repeter');
+        var mal = $rep.find('template.amendo-repeter-mal').html();
+        var i = $rep.find('.amendo-repeter-liste > .amendo-repeter-rad').length;
+        $rep.find('.amendo-repeter-liste').append(mal.split('__i__').join(i));
+    });
+
+    $(document).on('click', '.amendo-slett-rad', function() {
+        var $rep = $(this).closest('.amendo-repeter');
+        $(this).closest('.amendo-repeter-rad').remove();
+        oppdaterRepeterIndekser($rep);
+    });
+
+    function oppdaterRepeterIndekser($rep) {
+        var felt = $rep.data('repeter');
+        var mønster = new RegExp('^forside\\[' + felt + '\\]\\[\\d+\\]');
+        $rep.find('.amendo-repeter-liste > .amendo-repeter-rad').each(function(i) {
+            $(this).find('input, textarea, select').each(function() {
+                var name = $(this).attr('name');
+                if (name) $(this).attr('name', name.replace(mønster, 'forside[' + felt + '][' + i + ']'));
+            });
+        });
+    }
+
+    // ── Forside: mediefelt (bilde og video) ──
+    // URL-feltet er synlig og kan redigeres direkte (en video kan ligge på en
+    // CDN); knappen fyller det fra mediebiblioteket.
+    $(document).on('click', '.amendo-velg-media', function(e) {
+        e.preventDefault();
+        var $felt = $(this).closest('.amendo-media');
+        var type = $felt.data('type') === 'video' ? 'video' : 'image';
+        var velger = wp.media({
+            title: type === 'video' ? 'Velg video' : 'Velg bilde',
+            button: { text: 'Bruk' },
+            multiple: false,
+            library: { type: type }
+        });
+        velger.on('select', function() {
+            var valgt = velger.state().get('selection').first().toJSON();
+            $felt.find('.amendo-media-url').val(valgt.url).trigger('input');
+        });
+        velger.open();
+    });
+
+    $(document).on('click', '.amendo-fjern-media', function() {
+        $(this).closest('.amendo-media').find('.amendo-media-url').val('').trigger('input');
+    });
+
+    $(document).on('input', '.amendo-media-url', function() {
+        var url = $(this).val();
+        var $bilde = $(this).closest('.amendo-media').find('.amendo-media-forhandsvisning');
+        if (!$bilde.length) return;
+        if (url) $bilde.attr('src', url).prop('hidden', false);
+        else $bilde.attr('src', '').prop('hidden', true);
+    });
 });

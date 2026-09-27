@@ -2,22 +2,36 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.1.0
+ * Version: 1.3.0
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.1.0');
+define('AMENDO_SETTINGS_VERSION', '1.3.0');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
+
+require_once AMENDO_SETTINGS_PATH . 'includes/forside.php';
+
+/**
+ * Kapabiliteten som gir tilgang til Amendo-admin: meny, varsler og lagring.
+ *
+ * `manage_woocommerce`, ikke `manage_options`, slik at rollen
+ * Butikkadministrator (shop_manager) kan redigere butikkens innhold uten å få
+ * tilgang til resten av WordPress-innstillingene. Administratorer har den også.
+ * Filteret `amendo_settings_kapabilitet` lar en butikk stramme inn igjen.
+ */
+function amendo_settings_kapabilitet() {
+    return apply_filters('amendo_settings_kapabilitet', 'manage_woocommerce');
+}
 
 // Admin-meny
 add_action('admin_menu', function() {
     add_menu_page(
         'Amendo Innstillinger',
         'Amendo',
-        'manage_options',
+        amendo_settings_kapabilitet(),
         'amendo-settings',
         'amendo_settings_page',
         'dashicons-store',
@@ -29,7 +43,7 @@ add_action('admin_menu', function() {
 add_action('admin_notices', function() {
     $screen = get_current_screen();
     if (!$screen || strpos($screen->id, 'amendo') === false) return;
-    if (!current_user_can('manage_options')) return;
+    if (!current_user_can(amendo_settings_kapabilitet())) return;
 
     $avdelinger = json_decode(get_option('amendo_avdelinger', '[]'), true) ?: [];
     $mangler = [];
@@ -70,10 +84,14 @@ add_action('admin_enqueue_scripts', function($hook) {
 
 // Lagre innstillinger
 add_action('admin_post_amendo_save_settings', function() {
-    if (!current_user_can('manage_options')) wp_die('Ingen tilgang');
+    if (!current_user_can(amendo_settings_kapabilitet())) wp_die('Ingen tilgang', 403);
     check_admin_referer('amendo_settings_nonce');
 
-    $fields = ['butikk_navn', 'butikk_slagord', 'butikk_logo', 'design_primærfarge', 'design_sekundærfarge', 'kontakt_telefon', 'kontakt_epost', 'sosiale_instagram', 'sosiale_facebook', 'sosiale_tiktok'];
+    // WordPress legger skråstreker på $_POST («Hansen\'s»). Uten dette fikk
+    // hver apostrof én skråstrek til for hver lagring.
+    $_POST = wp_unslash($_POST);
+
+    $fields = ['butikk_navn', 'butikk_slagord', 'butikk_logo', 'butikk_orgnr', 'design_primærfarge', 'design_sekundærfarge', 'kontakt_telefon', 'kontakt_epost', 'sosiale_instagram', 'sosiale_facebook', 'sosiale_tiktok'];
     foreach ($fields as $field) {
         if (isset($_POST[$field])) {
             update_option('amendo_' . $field, sanitize_text_field($_POST[$field]));
@@ -173,6 +191,12 @@ add_action('admin_post_amendo_save_settings', function() {
             ];
         }
         update_option('amendo_avdelinger', json_encode($avdelinger));
+    }
+
+    // Forside — se includes/forside.php. Hele skjemaet sendes ved hver lagring,
+    // så også en lagring fra en annen fane skriver forsidefeltene.
+    if (isset($_POST['forside'])) {
+        amendo_forside_lagre($_POST);
     }
 
     wp_redirect(admin_url('admin.php?page=amendo-settings&saved=1'));
@@ -430,6 +454,10 @@ function amendo_get_settings() {
             'navn'    => get_option('amendo_butikk_navn', get_bloginfo('name')),
             'slagord' => get_option('amendo_butikk_slagord', get_bloginfo('description')),
             'logo'    => get_option('amendo_butikk_logo', ''),
+            'orgnr'   => get_option('amendo_butikk_orgnr', ''),
+            // Samme verdi under navnet frontendene til Garçon og Aanerud
+            // allerede leser (kontaktsiden). Tom til feltet fylles ut.
+            'organisasjonsnummer' => get_option('amendo_butikk_orgnr', ''),
         ],
         'design' => [
             'primærfarge'   => get_option('amendo_design_primærfarge', '#b45309'),
@@ -451,32 +479,29 @@ function amendo_get_settings() {
 
 function amendo_get_side($request) {
     $slug = sanitize_text_field($request['slug']);
-    $pages = get_posts(['name' => $slug, 'post_type' => 'page', 'post_status' => 'publish', 'numberposts' => 1]);
 
-    if (empty($pages) && $slug === 'forside') {
-        $front_id = get_option('page_on_front');
-        if ($front_id) $pages = [get_post($front_id)];
+    // Forsiden fra Amendo-admin når den har innhold; ellers ACF som før.
+    // Se includes/forside.php for flettingen med ACF-felter Amendo ikke eier.
+    if ($slug === 'forside') {
+        $svar = amendo_forside_rest_svar();
+        if ($svar !== null) return new WP_REST_Response($svar, 200);
     }
 
-    if (empty($pages) || !$pages[0]) return new WP_REST_Response(['fields' => []], 200);
+    // Uendret for alle sider (og for forsiden uten innhold i Amendo).
+    $page = amendo_finn_side($slug);
+    if (!$page) return new WP_REST_Response(['fields' => []], 200);
 
-    $page   = $pages[0];
     $fields = function_exists('get_fields') ? (get_fields($page->ID) ?: []) : [];
     return new WP_REST_Response(['id' => $page->ID, 'slug' => $slug, 'tittel' => $page->post_title, 'fields' => $fields], 200);
 }
 
-// Opprett sider ved aktivering
-register_activation_hook(__FILE__, 'amendo_opprett_sider');
-function amendo_opprett_sider() {
-    $sider = [['post_title'=>'Forside','post_name'=>'forside'],['post_title'=>'Om oss','post_name'=>'om-oss'],['post_title'=>'Kontakt','post_name'=>'kontakt'],['post_title'=>'Bedrift','post_name'=>'bedrift']];
-    foreach ($sider as $side) {
-        if (!get_page_by_path($side['post_name'])) {
-            wp_insert_post(['post_title'=>$side['post_title'],'post_name'=>$side['post_name'],'post_status'=>'publish','post_type'=>'page']);
-        }
-    }
-    $forside = get_page_by_path('forside');
-    if ($forside) { update_option('show_on_front','page'); update_option('page_on_front',$forside->ID); }
-}
+// ⚠⚠ INGEN AKTIVERINGSKROK. Her lå `amendo_opprett_sider`, som ved aktivering
+// opprettet sidene Forside, Om oss, Kontakt og Bedrift OG satte
+// `show_on_front`/`page_on_front` til den nye forsiden. På en butikk med egen
+// WordPress-forside byttet det ut forsiden kundene så — ved en aktivering.
+// Innholdet ligger nå i Amendo-admin (fanen Forside), og /side/{slug} leser
+// eksisterende sider uten å kreve at pluginen har laget dem. Sider som ble
+// opprettet av eldre versjoner blir stående urørt.
 
 // Inkluder ACF-feltgrupper
 add_action('plugins_loaded', function() {
@@ -491,6 +516,7 @@ function amendo_settings_page() {
     $butikk_navn    = get_option('amendo_butikk_navn', get_bloginfo('name'));
     $butikk_slagord = get_option('amendo_butikk_slagord', '');
     $butikk_logo    = get_option('amendo_butikk_logo', '');
+    $butikk_orgnr   = get_option('amendo_butikk_orgnr', '');
     $primærfarge    = get_option('amendo_design_primærfarge', '#b45309');
     $sekundærfarge  = get_option('amendo_design_sekundærfarge', '#1c1917');
     $telefon        = get_option('amendo_kontakt_telefon', '');
@@ -522,6 +548,7 @@ function amendo_settings_page() {
                 <button type="button" class="amendo-tab" data-tab="design">🎨 Design</button>
                 <button type="button" class="amendo-tab" data-tab="kontakt">📞 Kontakt</button>
                 <button type="button" class="amendo-tab" data-tab="sosiale">📱 Sosiale medier</button>
+                <button type="button" class="amendo-tab" data-tab="forside">🏠 Forside</button>
                 <button type="button" class="amendo-tab" data-tab="meny">🔗 Meny</button>
                 <button type="button" class="amendo-tab" data-tab="avdelinger">📍 Avdelinger</button>
                 <button type="button" class="amendo-tab" data-tab="levering">🚚 Levering & Henting</button>
@@ -538,6 +565,11 @@ function amendo_settings_page() {
                     <div class="amendo-field">
                         <label>Slagord</label>
                         <input type="text" name="butikk_slagord" value="<?php echo esc_attr($butikk_slagord); ?>" placeholder="Nybakt hver morgen">
+                    </div>
+                    <div class="amendo-field">
+                        <label for="butikk_orgnr">Org.nr.</label>
+                        <input type="text" id="butikk_orgnr" name="butikk_orgnr" value="<?php echo esc_attr($butikk_orgnr); ?>" placeholder="123 456 789" inputmode="numeric">
+                        <p class="field-help">Vises i footeren og på kontaktsiden. La stå tom for å skjule linjen.</p>
                     </div>
                     <div class="amendo-field">
                         <label>Logo</label>
@@ -611,6 +643,9 @@ function amendo_settings_page() {
                     </div>
                 </div>
             </div>
+
+            <!-- FORSIDE — se includes/forside.php -->
+            <?php amendo_forside_fane(); ?>
 
             <!-- MENY -->
             <div class="amendo-panel" id="tab-meny">
