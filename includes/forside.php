@@ -27,6 +27,7 @@ if (!defined('ABSPATH')) exit;
  * Feltene Amendo eier, og hvordan de saniteres.
  *   tekst → sanitize_text_field   lang → wp_kses_post
  *   url   → esc_url_raw           lenke → esc_url_raw, relative stier tillatt
+ *   bilde → som url, pluss {felt}_id (vedlegget) — se amendo_forside_bilde_id()
  */
 function amendo_forside_skjema() {
     return [
@@ -34,7 +35,7 @@ function amendo_forside_skjema() {
         'hero_tittel'        => 'tekst',
         'hero_tittel2'       => 'tekst',
         'hero_undertekst'    => 'lang',
-        'hero_bilde'         => 'url',
+        'hero_bilde'         => 'bilde',
         'hero_video'         => 'url',
         'hero_knapp1_tekst'  => 'tekst',
         'hero_knapp1_lenke'  => 'lenke',
@@ -49,7 +50,7 @@ function amendo_forside_skjema() {
         'features_kort'      => [
             'tittel'      => 'tekst',
             'tekst'       => 'lang',
-            'bilde'       => 'url',
+            'bilde'       => 'bilde',
             'ikon'        => 'tekst',
             'lenke_tekst' => 'tekst',
             'lenke'       => 'lenke',
@@ -57,7 +58,7 @@ function amendo_forside_skjema() {
         'omoss_etikett'      => 'tekst',
         'omoss_tittel'       => 'tekst',
         'omoss_tekst'        => 'lang',
-        'omoss_bilde'        => 'url',
+        'omoss_bilde'        => 'bilde',
         'omoss_knapp1_tekst' => 'tekst',
         'omoss_knapp1_lenke' => 'lenke',
         'omoss_knapp2_tekst' => 'tekst',
@@ -81,7 +82,7 @@ function amendo_forside_maks_rader($felt) {
 function amendo_forside_saniter_verdi($verdi, $type) {
     if (is_array($verdi)) {
         $verdi = $verdi['url'] ?? '';
-    } elseif (is_numeric($verdi) && ($type === 'url')) {
+    } elseif (is_numeric($verdi) && ($type === 'url' || $type === 'bilde')) {
         $verdi = wp_get_attachment_url((int) $verdi) ?: '';
     }
     if (!is_scalar($verdi) || $verdi === false) return '';
@@ -92,6 +93,7 @@ function amendo_forside_saniter_verdi($verdi, $type) {
         case 'lang':
             return wp_kses_post($verdi);
         case 'url':
+        case 'bilde':
             return esc_url_raw($verdi, ['http', 'https']);
         case 'lenke':
             return amendo_saniter_lenke($verdi);
@@ -131,8 +133,11 @@ function amendo_saniter_lenke($verdi) {
 /**
  * Hele forsidestrukturen, sanitert. Alle kjente nøkler er med (tomme som '' og
  * []), ukjente nøkler kastes. Liste-rader uten noen verdi fjernes.
+ *
+ * Bildefelt får {felt}_id ved siden av seg. `$lagring` = true når verdiene
+ * kommer fra admin-skjemaet; se amendo_forside_bilde_id().
  */
-function amendo_forside_saniter($inn) {
+function amendo_forside_saniter($inn, $lagring = false) {
     $inn = is_array($inn) ? $inn : [];
     $ut  = [];
     foreach (amendo_forside_skjema() as $felt => $type) {
@@ -144,15 +149,98 @@ function amendo_forside_saniter($inn) {
                 foreach ($type as $under => $undertype) {
                     $ren[$under] = amendo_forside_saniter_verdi($rad[$under] ?? '', $undertype);
                 }
-                if (implode('', $ren) !== '') $rader[] = $ren;
+                if (implode('', $ren) === '') continue;
+                foreach ($type as $under => $undertype) {
+                    if ($undertype === 'bilde') {
+                        $ren[$under . '_id'] = amendo_forside_bilde_id($ren[$under], $rad[$under] ?? '', $rad[$under . '_id'] ?? null, $lagring);
+                    }
+                }
+                $rader[] = $ren;
                 if (count($rader) >= amendo_forside_maks_rader($felt)) break;
             }
             $ut[$felt] = $rader;
         } else {
             $ut[$felt] = amendo_forside_saniter_verdi($inn[$felt] ?? '', $type);
+            if ($type === 'bilde') {
+                $ut[$felt . '_id'] = amendo_forside_bilde_id($ut[$felt], $inn[$felt] ?? '', $inn[$felt . '_id'] ?? null, $lagring);
+            }
         }
     }
     return $ut;
+}
+
+/**
+ * Vedlegg-ID for et bildefelt, eller 0.
+ *
+ * - Lagring fra skjemaet: ID-en mediebiblioteket satte brukes bare hvis den
+ *   fortsatt hører til URL-en (ellers er URL-en endret for hånd). Ellers slås
+ *   URL-en opp med attachment_url_to_postid; 0 når den ikke er fra biblioteket.
+ * - Lesing: en lagret ID (også 0 = «slått opp, ikke funnet») brukes som den
+ *   er. Mangler nøkkelen — verdier lagret før 1.4.5 — slås URL-en opp.
+ *   ACF-verdier (array med ID, eller bare ID) gir ID-en direkte.
+ */
+function amendo_forside_bilde_id($url, $raa, $gitt, $lagring) {
+    if ($url === '') return 0;
+    if ($gitt === null || $gitt === '') {
+        if (is_array($raa) && !empty($raa['ID'] ?? $raa['id'] ?? null)) {
+            $gitt = $raa['ID'] ?? $raa['id'];
+        } elseif (is_numeric($raa)) {
+            $gitt = $raa;
+        }
+    }
+    if (!$lagring && $gitt !== null && $gitt !== '' && is_numeric($gitt)) {
+        return max(0, (int) $gitt);
+    }
+    if (is_numeric($gitt) && (int) $gitt > 0 && wp_get_attachment_url((int) $gitt) === $url) {
+        return (int) $gitt;
+    }
+    return (int) attachment_url_to_postid($url);
+}
+
+/** Lagret forside mangler {felt}_id for et bilde (lagret før 1.4.5). */
+function amendo_forside_mangler_bilde_id($data) {
+    foreach (amendo_forside_skjema() as $felt => $type) {
+        if ($type === 'bilde' && ($data[$felt] ?? '') !== '' && !array_key_exists($felt . '_id', $data)) return true;
+        if (!is_array($type) || !in_array('bilde', $type, true)) continue;
+        foreach ((is_array($data[$felt] ?? null) ? $data[$felt] : []) as $rad) {
+            foreach ($type as $under => $undertype) {
+                if ($undertype === 'bilde' && is_array($rad) && ($rad[$under] ?? '') !== '' && !array_key_exists($under . '_id', $rad)) return true;
+            }
+        }
+    }
+    return false;
+}
+
+/**
+ * {felt}_bredde og {felt}_hoyde fra vedleggets metadata, rett etter {felt}_id.
+ * Utelates når bildet ikke er i mediebiblioteket eller mangler mål.
+ */
+function amendo_forside_med_dimensjoner(array $felter) {
+    $legg_til = function(array $rad, $felt) {
+        $id = (int) ($rad[$felt . '_id'] ?? 0);
+        $meta = $id ? wp_get_attachment_metadata($id) : false;
+        if (!is_array($meta) || empty($meta['width']) || empty($meta['height'])) return $rad;
+        $ut = [];
+        foreach ($rad as $k => $v) {
+            $ut[$k] = $v;
+            if ($k === $felt . '_id') {
+                $ut[$felt . '_bredde'] = (int) $meta['width'];
+                $ut[$felt . '_hoyde']  = (int) $meta['height'];
+            }
+        }
+        return $ut;
+    };
+    foreach (amendo_forside_skjema() as $felt => $type) {
+        if ($type === 'bilde') {
+            $felter = $legg_til($felter, $felt);
+        } elseif (is_array($type) && is_array($felter[$felt] ?? null)) {
+            foreach ($type as $under => $undertype) {
+                if ($undertype !== 'bilde') continue;
+                foreach ($felter[$felt] as $i => $rad) $felter[$felt][$i] = $legg_til($rad, $under);
+            }
+        }
+    }
+    return $felter;
 }
 
 /** Minst én verdi er fylt ut. Se punkt 1 øverst i fila. */
@@ -169,6 +257,20 @@ function amendo_forside_har_innhold($data) {
 function amendo_forside_hent() {
     $data = json_decode((string) get_option('amendo_forside', ''), true);
     return is_array($data) ? $data : null;
+}
+
+/**
+ * Lagret forside, sanitert, eller null når den er tom. Mangler bilde-ID-er
+ * (lagret før 1.4.5), slås de opp nå og lagres, så det bare skjer én gang.
+ */
+function amendo_forside_hent_ren() {
+    $data = amendo_forside_hent();
+    if (!amendo_forside_har_innhold($data)) return null;
+    $ren = amendo_forside_saniter($data);
+    if (amendo_forside_mangler_bilde_id($data)) {
+        update_option('amendo_forside', wp_json_encode($ren), false);
+    }
+    return $ren;
 }
 
 /**
@@ -196,8 +298,8 @@ function amendo_acf_felter($side) {
  * da tilbake på ACF som før).
  */
 function amendo_forside_rest_svar() {
-    $amendo = amendo_forside_hent();
-    if (!amendo_forside_har_innhold($amendo)) return null;
+    $amendo = amendo_forside_hent_ren();
+    if ($amendo === null) return null;
 
     $side = amendo_finn_side('forside');
     // ACF-felter Amendo ikke eier, flettes inn — se punkt 2 øverst i fila.
@@ -207,7 +309,7 @@ function amendo_forside_rest_svar() {
         'id'     => $side ? $side->ID : 0,
         'slug'   => 'forside',
         'tittel' => $side ? $side->post_title : 'Forside',
-        'fields' => array_merge($ekstra, amendo_forside_saniter($amendo)),
+        'fields' => array_merge($ekstra, amendo_forside_med_dimensjoner($amendo)),
     ];
 }
 
@@ -220,9 +322,9 @@ function amendo_forside_rest_svar() {
  *   'tom'    → ingen av delene
  */
 function amendo_forside_for_skjema() {
-    $amendo = amendo_forside_hent();
-    if (amendo_forside_har_innhold($amendo)) {
-        return [amendo_forside_saniter($amendo), 'amendo'];
+    $amendo = amendo_forside_hent_ren();
+    if ($amendo !== null) {
+        return [$amendo, 'amendo'];
     }
     $acf = amendo_forside_saniter(amendo_acf_felter(amendo_finn_side('forside')));
     if (amendo_forside_har_innhold($acf)) return [$acf, 'acf'];
@@ -231,7 +333,7 @@ function amendo_forside_for_skjema() {
 
 /** Lagrer fra $_POST (allerede wp_unslash-et av kalleren). */
 function amendo_forside_lagre($post) {
-    $data = amendo_forside_saniter($post['forside'] ?? []);
+    $data = amendo_forside_saniter($post['forside'] ?? [], true);
     update_option('amendo_forside', wp_json_encode($data), false);
 }
 
@@ -261,12 +363,15 @@ function amendo_forside_tekstomraade($navn, $etikett, $verdi, $rader = 3) {
  * Et mediefelt: URL-feltet er synlig og redigerbart (en video kan ligge på en
  * CDN), og knappen fyller det fra mediebiblioteket.
  */
-function amendo_forside_media($name, $etikett, $verdi, $medietype = 'image', $hjelp = '') {
+function amendo_forside_media($name, $etikett, $verdi, $medietype = 'image', $hjelp = '', $vedlegg_id = 0) {
     ?>
     <div class="amendo-field amendo-media" data-type="<?php echo esc_attr($medietype); ?>">
         <label><?php echo esc_html($etikett); ?></label>
         <div class="amendo-media-rad">
             <input type="url" class="amendo-media-url" name="<?php echo esc_attr($name); ?>" value="<?php echo esc_attr($verdi); ?>" placeholder="https://">
+            <?php if ($medietype === 'image'): // forside[hero_bilde] → forside[hero_bilde_id] ?>
+                <input type="hidden" class="amendo-media-id" name="<?php echo esc_attr(preg_replace('/\]$/', '_id]', $name)); ?>" value="<?php echo $vedlegg_id ? (int) $vedlegg_id : ''; ?>">
+            <?php endif; ?>
             <button type="button" class="amendo-btn-secondary amendo-velg-media">Velg fra mediebiblioteket</button>
             <button type="button" class="amendo-btn-danger amendo-fjern-media">Fjern</button>
         </div>
@@ -308,7 +413,7 @@ function amendo_forside_kort_rad($i, $rad) {
             <label>Tekst</label>
             <textarea name="<?php echo esc_attr($p); ?>[tekst]" rows="2"><?php echo esc_textarea($rad['tekst'] ?? ''); ?></textarea>
         </div>
-        <?php amendo_forside_media($p . '[bilde]', 'Bilde', $rad['bilde'] ?? ''); ?>
+        <?php amendo_forside_media($p . '[bilde]', 'Bilde', $rad['bilde'] ?? '', 'image', '', $rad['bilde_id'] ?? 0); ?>
         <div class="amendo-grid-2">
             <div class="amendo-field">
                 <label>Lenketekst</label>
@@ -346,7 +451,7 @@ function amendo_forside_fane() {
                 <?php amendo_forside_felt('hero_tittel2', 'Tittel, linje 2', $f['hero_tittel2']); ?>
             </div>
             <?php amendo_forside_tekstomraade('hero_undertekst', 'Undertekst', $f['hero_undertekst'], 2); ?>
-            <?php amendo_forside_media('forside[hero_bilde]', 'Bilde', $f['hero_bilde']); ?>
+            <?php amendo_forside_media('forside[hero_bilde]', 'Bilde', $f['hero_bilde'], 'image', '', $f['hero_bilde_id']); ?>
             <?php amendo_forside_media('forside[hero_video]', 'Video (valgfritt)', $f['hero_video'], 'video', 'MP4. Bildet over vises som plakat, og i stedet for videoen på treg linje og når kunden har bedt om redusert bevegelse.'); ?>
             <div class="amendo-grid-2">
                 <?php amendo_forside_felt('hero_knapp1_tekst', 'Knapp 1 tekst', $f['hero_knapp1_tekst'], 'Handle nå'); ?>
@@ -392,7 +497,7 @@ function amendo_forside_fane() {
                 <?php amendo_forside_felt('omoss_tittel', 'Tittel', $f['omoss_tittel']); ?>
             </div>
             <?php amendo_forside_tekstomraade('omoss_tekst', 'Tekst', $f['omoss_tekst'], 4); ?>
-            <?php amendo_forside_media('forside[omoss_bilde]', 'Bilde', $f['omoss_bilde']); ?>
+            <?php amendo_forside_media('forside[omoss_bilde]', 'Bilde', $f['omoss_bilde'], 'image', '', $f['omoss_bilde_id']); ?>
             <div class="amendo-grid-2">
                 <?php amendo_forside_felt('omoss_knapp1_tekst', 'Knapp 1 tekst', $f['omoss_knapp1_tekst'], 'Les mer om oss'); ?>
                 <?php amendo_forside_felt('omoss_knapp1_lenke', 'Knapp 1 lenke', $f['omoss_knapp1_lenke'], '/om-oss'); ?>

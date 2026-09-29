@@ -252,6 +252,8 @@ $(document).on('click', '.slett-kategori-regel', function() {
         velger.on('select', function() {
             var valgt = velger.state().get('selection').first().toJSON();
             $felt.find('.amendo-media-url').val(valgt.url).trigger('input');
+            // Etter trigger: input-lytteren under tømmer ID-en.
+            $felt.find('.amendo-media-id').val(valgt.id);
         });
         velger.open();
     });
@@ -262,6 +264,9 @@ $(document).on('click', '.slett-kategori-regel', function() {
 
     $(document).on('input', '.amendo-media-url', function() {
         var url = $(this).val();
+        // Ny URL (skrevet inn, limt inn eller fjernet): ID-en hører til den
+        // gamle. Serveren slår opp den nye ved lagring.
+        $(this).closest('.amendo-media').find('.amendo-media-id').val('');
         var $bilde = $(this).closest('.amendo-media').find('.amendo-media-forhandsvisning');
         if (!$bilde.length) return;
         if (url) $bilde.attr('src', url).prop('hidden', false);
