@@ -8,6 +8,8 @@
  * dem kjøres når headless-kassen lager ordren med POST /wc/v3/orders, så
  * Cargonizer visste verken tjeneste eller hentested for disse ordrene.
  *
+ * Om Cargonizer finnes, sjekkes først når ordren lages (se kroken under).
+ *
  * Når en ordre OPPRETTES via REST, med en fraktlinje hvis metode-instans har
  * `lcfwc_service`, og ordren ikke allerede har `_lcfwc_service`:
  *
@@ -27,13 +29,13 @@
 
 if (!defined('ABSPATH')) exit;
 
-// Pluginen lastes etter vår (alfabetisk), så sjekken må vente til alle er lastet.
-add_action('plugins_loaded', function() {
-    if (!class_exists('LCFWC_Checkout') && !function_exists('lcfwc_save_cargonizer_shipment_data_to_order')) {
-        return;
-    }
-    add_action('woocommerce_rest_insert_shop_order_object', 'amendo_cargonizer_rest_ordre', 20, 3);
-});
+// ⚠ Kroken registreres UBETINGET. cargonizer-connect laster klassene sine selv
+// på plugins_loaded, etter vår kode — en sjekk ved lasting eller på
+// plugins_loaded (1.4.2) så dem aldri, og kroken ble aldri koblet på.
+// class_exists/function_exists sjekkes når ordren lages. Butikker uten
+// Cargonizer stopper før det: ingen fraktinstans har lcfwc_service, så de
+// får verken arbeid eller logglinjer.
+add_action('woocommerce_rest_insert_shop_order_object', 'amendo_cargonizer_rest_ordre', 20, 3);
 
 function amendo_cargonizer_rest_ordre($order, $request, $creating) {
     if (!$creating || !$order instanceof WC_Order) return;
