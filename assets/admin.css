@@ -399,3 +399,4 @@
 .amendo-secret-kopier input { flex: 1; font-family: monospace; font-size: 13px; }
 .amendo-secret-ny { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 12px; }
 .amendo-advarsel { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 12px; margin: 12px 0; font-size: 13px; line-height: 1.5; color: #78350f; }
+.amendo-notice-ekstra { font-weight: normal; opacity: .8; margin-left: 6px; }

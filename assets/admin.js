@@ -8,20 +8,17 @@ jQuery(function($) {
         $('#tab-' + $(this).data('tab')).addClass('active');
     });
 
-    // ── Kasse-secret ──
+    // ── Secrets (Kasse, Revalidering) ──
     // Knappen er type="button" og ikke submit: ellers ville Enter i et
     // hvilket som helst felt (den står før «Lagre») generert en ny secret.
-    $('#generer-secret').on('click', function() {
-        var tekst = $(this).data('satt') == 1
-            ? 'Erstatte kasse-secreten? Den gamle slutter å virke med en gang, og betaling i kassen feiler til den nye er lagt inn som KASSE_WEBHOOK_SECRET i Vercel og prosjektet er redeployet.'
-            : 'Generere kasse-secret? Den må legges inn som KASSE_WEBHOOK_SECRET i Vercel og prosjektet redeployes, ellers feiler betaling i kassen.';
-        if (!confirm(tekst)) return;
-        $('#amendo_ny_kasse_secret').val('1');
+    $('.amendo-generer-secret').on('click', function() {
+        if (!confirm($(this).data('bekreft'))) return;
+        $(this).closest('.amendo-hemmelighet').find('.amendo-secret-flagg').val('1');
         $(this).closest('form').trigger('submit');
     });
 
-    $('#kopier-secret').on('click', function() {
-        var $knapp = $(this), felt = document.getElementById('amendo-ny-secret');
+    $('.amendo-kopier-secret').on('click', function() {
+        var $knapp = $(this), felt = $knapp.siblings('.amendo-ny-secret')[0];
         var ferdig = function() { $knapp.text('Kopiert ✓'); };
         if (navigator.clipboard && window.isSecureContext) {
             navigator.clipboard.writeText(felt.value).then(ferdig, function() { felt.select(); document.execCommand('copy'); ferdig(); });
