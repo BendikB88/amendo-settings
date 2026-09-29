@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.0
+ * Version: 1.4.1
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.0');
+define('AMENDO_SETTINGS_VERSION', '1.4.1');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -97,6 +97,15 @@ add_action('admin_post_amendo_save_settings', function() {
         if (isset($_POST[$field])) {
             update_option('amendo_' . $field, sanitize_text_field($_POST[$field]));
         }
+    }
+
+    // Kasse-secret. Er ikke et skjemafelt: den endres BARE når «Generer ny» er
+    // trykket (skjult felt = '1'), så lagring fra andre faner aldri tømmer den.
+    // Verdien vises én gang på siden etter omdirigeringen, så slettes kopien.
+    if (($_POST['amendo_ny_kasse_secret'] ?? '') === '1') {
+        $ny_secret = bin2hex(random_bytes(32));
+        update_option('amendo_kasse_secret', $ny_secret);
+        set_transient('amendo_ny_kasse_secret_' . get_current_user_id(), $ny_secret, 10 * MINUTE_IN_SECONDS);
     }
 
     // Meny
@@ -518,6 +527,9 @@ function amendo_settings_page() {
     $butikk_slagord = get_option('amendo_butikk_slagord', '');
     $butikk_logo    = get_option('amendo_butikk_logo', '');
     $butikk_orgnr   = get_option('amendo_butikk_orgnr', '');
+    $kasse_secret   = (string) get_option('amendo_kasse_secret', '');
+    $ny_secret      = get_transient('amendo_ny_kasse_secret_' . get_current_user_id());
+    if ($ny_secret !== false) delete_transient('amendo_ny_kasse_secret_' . get_current_user_id());
     $primærfarge    = get_option('amendo_design_primærfarge', '#b45309');
     $sekundærfarge  = get_option('amendo_design_sekundærfarge', '#1c1917');
     $telefon        = get_option('amendo_kontakt_telefon', '');
@@ -585,6 +597,38 @@ function amendo_settings_page() {
                             <?php if ($butikk_logo): ?><button type="button" class="amendo-btn-danger" id="remove-logo">Fjern</button><?php endif; ?>
                         </div>
                     </div>
+                </div>
+
+                <div class="amendo-card">
+                    <h2>Kasse-secret</h2>
+                    <p class="amendo-desc">Delt hemmelighet mellom WordPress og kassen i frontenden. Brukes av fraktberegningen, Adyen-sesjonen og betalingsomdirigeringen.</p>
+                    <div class="amendo-field">
+                        <label>Status</label>
+                        <p class="amendo-secret-status">
+                            <?php if ($kasse_secret !== ''): ?>
+                                <strong>Satt</strong>, <?php echo esc_html(strlen($kasse_secret)); ?> tegn
+                            <?php else: ?>
+                                <strong>Ikke satt</strong>
+                            <?php endif; ?>
+                        </p>
+                    </div>
+                    <?php if (is_string($ny_secret) && $ny_secret !== ''): ?>
+                    <div class="amendo-field amendo-secret-ny">
+                        <label for="amendo-ny-secret">Ny secret — vises bare denne ene gangen</label>
+                        <div class="amendo-secret-kopier">
+                            <input type="text" id="amendo-ny-secret" value="<?php echo esc_attr($ny_secret); ?>" readonly>
+                            <button type="button" class="amendo-btn-secondary" id="kopier-secret">Kopier</button>
+                        </div>
+                        <p class="field-help">Kopier den nå. Etter at siden lastes på nytt, vises bare status.</p>
+                    </div>
+                    <?php endif; ?>
+                    <div class="amendo-advarsel">
+                        <strong>⚠ Samme verdi må inn som <code>KASSE_WEBHOOK_SECRET</code> i frontendens Vercel-prosjekt</strong>, og prosjektet må redeployes.
+                        Til det er gjort, feiler betaling i kassen, og fraktberegningen blir begrenset per IP.
+                    </div>
+                    <input type="hidden" name="amendo_ny_kasse_secret" id="amendo_ny_kasse_secret" value="0">
+                    <button type="button" class="amendo-btn-secondary" id="generer-secret" data-satt="<?php echo $kasse_secret !== '' ? '1' : '0'; ?>">Generer ny</button>
+                    <p class="field-help">Lagrer også resten av skjemaet.</p>
                 </div>
             </div>
 

@@ -15,6 +15,12 @@
  *   cookie, ingen rad i woocommerce_sessions). En eventuell sesjon, kunde og
  *   kurv som allerede finnes i forespørselen legges til side og settes tilbake
  *   etterpå, urørt.
+ * - Alle lyttere på kurvhendelsene i AMENDO_FRAKT_STILLE_KROKER tas av mens
+ *   beregningen pågår og settes tilbake etterpå, også ved feil. Ellers sender
+ *   sporingsplugins (facebook-for-woocommerce/Conversions API, Mailchimp,
+ *   GTM4WP) en falsk AddToCart for hver fraktberegning. Filtre som
+ *   woocommerce_add_cart_item_data blir stående: de kan endre pris og vekt,
+ *   og dermed frakten.
  * - Beregningen kjøres som gjest (bruker 0), så ingen persistent kurv i
  *   usermeta leses, skrives eller slettes, selv om kallet er autentisert.
  * - Den midlertidige kurven får ingen kroker (filteret
@@ -33,6 +39,15 @@ if (!defined('ABSPATH')) exit;
 
 const AMENDO_FRAKT_MAKS_LINJER = 100;
 const AMENDO_FRAKT_MAKS_ANTALL  = 9999;
+
+/** Kurvhendelser som ikke skal nå andre plugins mens den midlertidige kurven fylles. */
+const AMENDO_FRAKT_STILLE_KROKER = [
+    'woocommerce_add_to_cart',
+    'woocommerce_cart_updated',
+    'woocommerce_cart_item_removed',
+    'woocommerce_cart_emptied',
+    'woocommerce_after_cart_item_quantity_update',
+];
 
 /** Metoder som ikke er hjemlevering, og som derfor aldri skjules. */
 const AMENDO_FRAKT_HENTING = ['local_pickup', 'pickup_location'];
@@ -161,6 +176,7 @@ function amendo_frakt_heltall($verdi) {
  * filen for hvorfor hvert steg er her.
  */
 function amendo_frakt_beregn(array $inn) {
+    global $wp_filter;
     amendo_frakt_definer_minnesesjon();
 
     $wc = WC();
@@ -178,6 +194,14 @@ function amendo_frakt_beregn(array $inn) {
     add_filter('woocommerce_session_handler', $sesjonsklasse, PHP_INT_MAX);
     add_filter('woocommerce_set_cookie_enabled', $av, PHP_INT_MAX);
     add_filter('woocommerce_persistent_cart_enabled', $av, PHP_INT_MAX);
+
+    $stille = [];
+    foreach (AMENDO_FRAKT_STILLE_KROKER as $krok) {
+        if (isset($wp_filter[$krok])) {
+            $stille[$krok] = $wp_filter[$krok];
+            unset($wp_filter[$krok]);
+        }
+    }
 
     try {
         add_filter('woocommerce_cart_session_initialize', $av, PHP_INT_MAX);
@@ -217,6 +241,12 @@ function amendo_frakt_beregn(array $inn) {
             'avviste_varer'        => $avviste,
         ];
     } finally {
+        // Nøyaktig de samme lytterne tilbake; noe som ble lagt til underveis
+        // hørte til den midlertidige kurven.
+        foreach (AMENDO_FRAKT_STILLE_KROKER as $krok) {
+            unset($wp_filter[$krok]);
+            if (isset($stille[$krok])) $wp_filter[$krok] = $stille[$krok];
+        }
         remove_filter('woocommerce_cart_session_initialize', $av, PHP_INT_MAX);
         remove_filter('woocommerce_session_handler', $sesjonsklasse, PHP_INT_MAX);
         remove_filter('woocommerce_set_cookie_enabled', $av, PHP_INT_MAX);

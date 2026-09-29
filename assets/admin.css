@@ -392,3 +392,10 @@
 .amendo-media-forhandsvisning { display: block; max-height: 90px; max-width: 200px; margin-top: 8px; border-radius: 6px; object-fit: cover; border: 1px solid #e5e7eb; }
 .amendo-media-forhandsvisning[hidden] { display: none; }
 .forside-kort { border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+
+/* Kasse-secret */
+.amendo-secret-status { margin: 4px 0 0; font-size: 14px; }
+.amendo-secret-kopier { display: flex; gap: 8px; }
+.amendo-secret-kopier input { flex: 1; font-family: monospace; font-size: 13px; }
+.amendo-secret-ny { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 12px; }
+.amendo-advarsel { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 12px; margin: 12px 0; font-size: 13px; line-height: 1.5; color: #78350f; }
