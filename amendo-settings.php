@@ -2,18 +2,19 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.1
+ * Version: 1.4.2
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.1');
+define('AMENDO_SETTINGS_VERSION', '1.4.2');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
 require_once AMENDO_SETTINGS_PATH . 'includes/forside.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/frakt.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/cargonizer.php';
 
 /**
  * Kapabiliteten som gir tilgang til Amendo-admin: meny, varsler og lagring.
