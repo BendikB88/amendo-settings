@@ -2,17 +2,18 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.3.0
+ * Version: 1.4.0
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.3.0');
+define('AMENDO_SETTINGS_VERSION', '1.4.0');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
 require_once AMENDO_SETTINGS_PATH . 'includes/forside.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/frakt.php';
 
 /**
  * Kapabiliteten som gir tilgang til Amendo-admin: meny, varsler og lagring.
@@ -115,9 +116,9 @@ add_action('admin_post_amendo_save_settings', function() {
     // Levering & Henting
     $levering_fields = ['henting_aktiv','henting_tidsluke','henting_maks_per_tidsluke',
         'henting_prosesseringstid','henting_cutoff','levering_aktiv','levering_metode',
-        'wolt_api_key','levering_tidsluke','levering_prosesseringstid'];
+        'wolt_api_key','levering_tidsluke','levering_prosesseringstid','frakt_skjul_betalt'];
     foreach ($levering_fields as $field) {
-        if ($field === 'henting_aktiv' || $field === 'levering_aktiv') {
+        if ($field === 'henting_aktiv' || $field === 'levering_aktiv' || $field === 'frakt_skjul_betalt') {
             update_option('amendo_' . $field, isset($_POST[$field]) ? '1' : '0');
         } elseif ($field === 'wolt_api_key') {
             if (!empty($_POST[$field])) update_option('amendo_wolt_api_key', sanitize_text_field($_POST[$field]));
@@ -881,6 +882,19 @@ function amendo_settings_page() {
                             <label>Prosesseringstid levering (virkedager)</label>
                             <input type="number" name="levering_prosesseringstid" value="<?php echo esc_attr(get_option('amendo_levering_prosesseringstid','2')); ?>" min="0" max="30">
                         </div>
+                    </div>
+                </div>
+
+                <div class="amendo-card">
+                    <h2>Frakt i kassen</h2>
+                    <p class="amendo-desc">Fraktalternativene i kassen beregnes av WooCommerce ut fra fraktsonene, med MVA og gratis-frakt-grenser.</p>
+                    <div class="amendo-field">
+                        <label for="frakt_skjul_betalt">Skjul betalt frakt når gratis frakt er oppnådd</label>
+                        <label class="toggle">
+                            <input type="checkbox" id="frakt_skjul_betalt" name="frakt_skjul_betalt" <?php checked(get_option('amendo_frakt_skjul_betalt','1'),'1'); ?>>
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <p class="field-help">Når kurven gir gratis frakt, vises bare gratis frakt og henting.</p>
                     </div>
                 </div>
 
