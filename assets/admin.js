@@ -207,6 +207,67 @@ $(document).on('click', '.slett-kategori-regel', function() {
     $(this).closest('.kategori-regel-rad').remove();
 });
 
+    // ── Kategoriraden ──
+    // Navnene nummereres etter rekkefølgen i DOM-en etter hver endring, så
+    // PHP får lista i den rekkefølgen kunden ser den.
+    function kategoriradNummerer($wrap) {
+        var liste = $wrap.data('liste');
+        var mønster = new RegExp('^kategorirad\\[' + liste + '\\]\\[[^\\]]+\\]');
+        $wrap.find('.kategorirad-liste > .kategorirad-rad').each(function(i) {
+            $(this).find('[name]').each(function() {
+                $(this).attr('name', $(this).attr('name').replace(mønster, 'kategorirad[' + liste + '][' + i + ']'));
+            });
+        });
+        kategoriradOppdaterValg();
+    }
+
+    // En kategori kan bare være med én gang, i én av listene.
+    function kategoriradOppdaterValg() {
+        var brukt = {};
+        $('.kategorirad-liste .kategorirad-term').each(function() { if (this.value) brukt[this.value] = true; });
+        $('.kategorirad-velg option').each(function() {
+            if (this.value) $(this).prop('disabled', !!brukt[this.value]);
+        });
+    }
+
+    $('.kategorirad-legg-til-knapp').on('click', function() {
+        var $wrap = $(this).closest('.kategorirad-liste-wrap');
+        var $valgt = $wrap.find('.kategorirad-velg option:selected');
+        if (!$valgt.val() || $valgt.prop('disabled')) return;
+        var $liste = $wrap.find('.kategorirad-liste');
+        var mal = $wrap.find('template.kategorirad-mal').html();
+        var $rad = $(mal.split('__i__').join($liste.children().length));
+        $rad.find('.kategorirad-term').val($valgt.val());
+        $rad.find('.kategorirad-navn').text($valgt.data('navn'));
+        $rad.find('.kategorirad-antall').text('(' + $valgt.data('antall') + ')');
+        $liste.append($rad);
+        $wrap.find('.kategorirad-velg').val('');
+        kategoriradNummerer($wrap);
+    });
+
+    $(document).on('click', '.kategorirad-fjern', function() {
+        var $wrap = $(this).closest('.kategorirad-liste-wrap');
+        $(this).closest('.kategorirad-rad').remove();
+        kategoriradNummerer($wrap);
+    });
+
+    $(document).on('click', '.kategorirad-opp, .kategorirad-ned', function() {
+        var $rad = $(this).closest('.kategorirad-rad');
+        if ($(this).hasClass('kategorirad-opp')) $rad.prev('.kategorirad-rad').before($rad);
+        else $rad.next('.kategorirad-rad').after($rad);
+        kategoriradNummerer($rad.closest('.kategorirad-liste-wrap'));
+        $(this).trigger('focus');
+    });
+
+    if ($.fn.sortable) {
+        $('.kategorirad-liste').sortable({
+            handle: '.meny-drag',
+            axis: 'y',
+            update: function() { kategoriradNummerer($(this).closest('.kategorirad-liste-wrap')); }
+        });
+    }
+    kategoriradOppdaterValg();
+
     // ── Forside: repeterbare lister ──
     // Samme mønster som menyen: legg til en rad, slett en rad, og nummerer
     // `name`-attributtene på nytt så PHP får en sammenhengende liste. Raden

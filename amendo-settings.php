@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.5
+ * Version: 1.4.6
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.5');
+define('AMENDO_SETTINGS_VERSION', '1.4.6');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -17,6 +17,7 @@ require_once AMENDO_SETTINGS_PATH . 'includes/frakt.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/cargonizer.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/hemmeligheter.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/revalidering.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/kategorirad.php';
 
 /**
  * Kapabiliteten som gir tilgang til Amendo-admin: meny, varsler og lagring.
@@ -82,7 +83,9 @@ add_action('admin_notices', function() {
 add_action('admin_enqueue_scripts', function($hook) {
     if ($hook !== 'toplevel_page_amendo-settings') return;
     wp_enqueue_style('amendo-settings', AMENDO_SETTINGS_URL . 'assets/admin.css', [], AMENDO_SETTINGS_VERSION);
-    wp_enqueue_script('amendo-settings', AMENDO_SETTINGS_URL . 'assets/admin.js', ['jquery'], AMENDO_SETTINGS_VERSION, true);
+    // jquery-ui-sortable og jquery-touch-punch (dra i kategoriraden, også på
+    // berøringsskjerm) følger med WordPress.
+    wp_enqueue_script('amendo-settings', AMENDO_SETTINGS_URL . 'assets/admin.js', ['jquery', 'jquery-ui-sortable', 'jquery-touch-punch'], AMENDO_SETTINGS_VERSION, true);
     wp_enqueue_media();
 });
 
@@ -122,6 +125,9 @@ add_action('admin_post_amendo_save_settings', function() {
         }
         update_option('amendo_meny', json_encode($meny));
     }
+
+    // Kategoriraden — se includes/kategorirad.php.
+    amendo_kategorirad_lagre($_POST);
 
     // Levering & Henting
     $levering_fields = ['henting_aktiv','henting_tidsluke','henting_maks_per_tidsluke',
@@ -487,6 +493,7 @@ function amendo_get_settings() {
             'tiktok'    => get_option('amendo_sosiale_tiktok', ''),
         ],
         'meny'       => $meny,
+        'kategorirad' => amendo_kategorirad_rest(),
         'avdelinger' => $avdelinger,
     ];
 }
@@ -692,6 +699,8 @@ function amendo_settings_page() {
                     </div>
                     <button type="button" class="amendo-btn-secondary" id="legg-til-meny" style="margin-top:12px">+ Legg til menylenke</button>
                 </div>
+
+                <?php amendo_kategorirad_admin(); ?>
             </div>
 
             <!-- AVDELINGER -->

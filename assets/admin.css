@@ -400,3 +400,17 @@
 .amendo-secret-ny { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 12px; }
 .amendo-advarsel { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 12px; margin: 12px 0; font-size: 13px; line-height: 1.5; color: #78350f; }
 .amendo-notice-ekstra { font-weight: normal; opacity: .8; margin-left: 6px; }
+
+/* Kategoriraden */
+.kategorirad-rad { background: #fff; }
+.kategorirad-navn { flex: 1; font-weight: 500; font-size: 13px; }
+.kategorirad-antall { color: #9ca3af; font-size: 12px; }
+.meny-rad input.kategorirad-kortnavn { flex: 0 1 180px; }
+.kategorirad-uthev { display: flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
+.kategorirad-legg-til { display: flex; gap: 8px; margin-top: 12px; }
+.kategorirad-legg-til select { flex: 1; max-width: 360px; }
+.kategorirad-liste .ui-sortable-placeholder { visibility: visible !important; background: #f3f4f6; border-radius: 6px; }
+@media (max-width: 782px) {
+    .kategorirad-rad { flex-wrap: wrap; }
+    .meny-rad input.kategorirad-kortnavn { flex: 1 1 100%; }
+}
