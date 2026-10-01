@@ -1,0 +1,6 @@
+# Testene og utviklerdokumentasjonen skal ikke med i pluginen hos butikkene
+# (git archive / zip fra GitHub).
+tests/ export-ignore
+CLAUDE.md export-ignore
+.gitattributes export-ignore
+.gitignore export-ignore
