@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.6
+ * Version: 1.4.7
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.6');
+define('AMENDO_SETTINGS_VERSION', '1.4.7');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -18,6 +18,7 @@ require_once AMENDO_SETTINGS_PATH . 'includes/cargonizer.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/hemmeligheter.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/revalidering.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/kategorirad.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/betaling.php';
 
 /**
  * Kapabiliteten som gir tilgang til Amendo-admin: meny, varsler og lagring.
@@ -308,109 +309,7 @@ function amendo_set_helsebygget_produkter($request) {
     return new WP_REST_Response(['ok' => true, 'aktive' => count($ids)], 200);
 }
 
-function amendo_gateway_redirect($request) {
-    $body       = $request->get_json_params();
-    $order_id   = intval($body['order_id'] ?? 0);
-    $gateway_id = sanitize_text_field($body['gateway_id'] ?? '');
-    $return_url = sanitize_url($body['return_url'] ?? '');
-
-    if (!$order_id || !$gateway_id) {
-        return new WP_REST_Response(['error' => 'Mangler order_id eller gateway_id'], 400);
-    }
-
-    $order = wc_get_order($order_id);
-    if (!$order) {
-        return new WP_REST_Response(['error' => 'Fant ikke ordren'], 404);
-    }
-
-    $gateways = WC()->payment_gateways()->payment_gateways();
-    $gateway  = $gateways[$gateway_id] ?? null;
-
-    if (!$gateway) {
-        return new WP_REST_Response(['error' => 'Fant ikke gateway: ' . $gateway_id], 404);
-    }
-
-    // Overstyr returnUrl til headless kasse/takk-siden
-    if (!empty($return_url)) {
-        add_filter('woocommerce_get_checkout_order_received_url', function() use ($return_url, $order_id) {
-            return add_query_arg('order_id', $order_id, $return_url);
-        });
-        add_filter('woocommerce_get_return_url', function() use ($return_url, $order_id) {
-            return add_query_arg('order_id', $order_id, $return_url);
-        });
-    }
-
-    $result = $gateway->process_payment($order_id);
-
-    if (($result['result'] ?? '') === 'success' && !empty($result['redirect'])) {
-        return new WP_REST_Response([
-            'redirect' => $result['redirect'],
-        ], 200);
-    }
-
-    return new WP_REST_Response(['error' => 'Gateway returnerte ikke redirect'], 502);
-}
-
-function amendo_create_adyen_session($request) {
-    // Sjekk at gateway-pluginen er lastet
-    if (!class_exists('AOrder\Gateways\API\Adyen')) {
-        return new WP_REST_Response([
-            'error' => 'Amendo Gateway ikke aktivert'
-        ], 503);
-    }
-
-    $body           = $request->get_json_params();
-    $amount         = floatval($body['amount'] ?? 0);
-    $currency       = sanitize_text_field($body['currency'] ?? 'NOK');
-    $country        = sanitize_text_field($body['countryCode'] ?? 'NO');
-    $ref            = sanitize_text_field($body['reference'] ?? uniqid('order_'));
-    $payment_method = sanitize_text_field($body['payment_method'] ?? '');
-
-    if ($amount <= 0) {
-        return new WP_REST_Response(['error' => 'Ugyldig beløp'], 400);
-    }
-
-    // Klarna bruker AmendoPOS merchant account — kall api_call() direkte
-    // slik at vi unngår å endre gateway-pluginen
-    $is_klarna = strpos($payment_method, 'klarna') !== false;
-
-    if ($is_klarna && class_exists('AOrder\Gateways\Adyen\Klarna')) {
-        $merchant_account = \AOrder\Gateways\Adyen\Klarna::merchant_account();
-        $session = \AOrder\Gateways\API\Adyen::api_call('/sessions', [
-            'merchantAccount' => $merchant_account,
-            'amount'          => [
-                'currency' => $currency ?: get_woocommerce_currency(),
-                'value'    => $amount * 100,
-            ],
-            'countryCode'     => $country ?: WC()->countries->get_base_country(),
-            'returnUrl'       => site_url('checkout'),
-            'channel'         => 'Web',
-            'reference'       => get_site_url() . '/' . $ref,
-        ]);
-    } else {
-        $session = \AOrder\Gateways\API\Adyen::create_session($amount, $ref, $country, $currency);
-    }
-
-    // create_session returnerer stdClass-objekt
-    $session_id   = $session->id ?? ($session['id'] ?? null);
-    $session_data = $session->sessionData ?? ($session['sessionData'] ?? null);
-
-    if (empty($session_id)) {
-        return new WP_REST_Response(['error' => 'Kunne ikke opprette Adyen-sesjon'], 502);
-    }
-
-    // Hent clientKey og environment fra gateway-innstillingene
-    $card_gateway = WC()->payment_gateways()->payment_gateways()['amendo_adyen_card'] ?? null;
-    $client_key   = $card_gateway ? $card_gateway->get_option('client_key') : '';
-    $environment  = \AmendoCore()->is_live() ? 'live' : 'test';
-
-    return new WP_REST_Response([
-        'sessionId'   => $session_id,
-        'sessionData' => $session_data,
-        'clientKey'   => $client_key,
-        'environment' => $environment,
-    ], 200);
-}
+// amendo_gateway_redirect() og amendo_create_adyen_session(): se includes/betaling.php.
 
 function amendo_get_leveringsregler() {
     // Globale innstillinger

@@ -8,7 +8,7 @@ nye felter i REST-svar er greit, endrede eller fjernede er det ikke.
 ## Struktur
 
 - `amendo-settings.php` — header/versjon, admin-meny, lagring (`admin_post_amendo_save_settings`), REST-ruter, admin-siden.
-- `includes/` — én fil per område: `forside.php`, `frakt.php`, `cargonizer.php`, `hemmeligheter.php`, `revalidering.php`, `kategorirad.php`. Hver fil har en toppkommentar som forklarer hvorfor den ser ut som den gjør — les den før du endrer.
+- `includes/` — én fil per område: `forside.php`, `frakt.php`, `cargonizer.php`, `hemmeligheter.php`, `revalidering.php`, `kategorirad.php`, `betaling.php`. Hver fil har en toppkommentar som forklarer hvorfor den ser ut som den gjør — les den før du endrer.
 - `assets/admin.js` — kjører i wp-admin der jQuery er i noConflict-modus: all kode inne i `jQuery(function($) { … })`.
 - `tests/playground/` — testene (under). Er `export-ignore` og skal aldri med i pluginen hos butikkene.
 
@@ -56,6 +56,7 @@ parallelt. Hver suite tar 2–10 minutter (Playground bruker 10–25 s per kall)
 | `bilder-og-sider` | bilde-ID/-mål på forsiden; WP-sider varsler frontenden |
 | `kategorirad` | kategoriraden: lagring, `/settings`, admin, jsdom, varsel ved endring |
 | `cargonizer` | `_lcfwc_*` på REST-ordrer, mot stubber |
+| `betaling` | `/adyen-session` og `/gateway-redirect` mot stubber av Amendo Gateway og Vipps |
 
 Ny suite: legg en fil i `suiter/`, og sett den inn i `REKKEFOLGE` i `kjor.mjs`
 (ukjente filer kjøres sist i alfabetisk rekkefølge).

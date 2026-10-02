@@ -24,7 +24,7 @@ mkdirSync(LOGG, { recursive: true });
 // Raskeste og mest grunnleggende først; hovedsuitens deler før de nyere.
 const REKKEFOLGE = [
   'frakt-beregning', 'frakt-validering', 'rate-limit', 'sporing-og-secret', 'admin',
-  'admin-js', 'revalidering', 'bilder-og-sider', 'kategorirad', 'cargonizer',
+  'admin-js', 'revalidering', 'bilder-og-sider', 'kategorirad', 'cargonizer', 'betaling',
 ];
 const finnes = readdirSync(join(HER, 'suiter')).filter(f => f.endsWith('.mjs')).map(f => f.slice(0, -4));
 const ukjente = finnes.filter(s => !REKKEFOLGE.includes(s));
