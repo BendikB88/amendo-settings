@@ -28,6 +28,19 @@
  *   ingen persistent kurv, ingen lagring ved shutdown. I tillegg er
  *   wc_setcookie og persistent kurv slått av mens beregningen pågår.
  *
+ * ── KUPONG (1.4.9) ──────────────────────────────────────────────────────────
+ * Valgfritt `kupong` (+ `epost`): kupongen legges på den midlertidige kurven
+ * med WooCommerce sin egen `apply_coupon()` — samme regler som WooCommerce
+ * sin kasse (utløpsdato, minstebeløp, bruksgrense, produktbegrensninger,
+ * MVA). Med `epost` sjekkes også grense per kunde og e-postbegrensning
+ * (`check_customer_coupons()`). Frakten regnes MED rabatten, så gratis-frakt-
+ * grensen og kupong-gratisfrakt blir riktige. Svaret får da også `kupong` og
+ * `varer_inkl_mva`; uten `kupong` er svaret nøyaktig som før.
+ *
+ * ⚠⚠ KUPONG KREVER X-Amendo-Kasse-Secret (403 uten). Endepunktet er åpent,
+ * og et åpent «er denne koden gyldig?» er et verktøy for å gjette koder.
+ * Headless-kassen kaller fra serveren og har sin egen brems per kunde-IP.
+ *
  * Rate limit: 30 kall/min per REMOTE_ADDR (filter `amendo_frakt_rate_limit`).
  * Kassene kaller fra Vercel, der alle kunder har samme IP. De sender derfor
  * X-Amendo-Kasse-Secret, som gir unntak — men BARE når `amendo_kasse_secret`
@@ -47,6 +60,9 @@ const AMENDO_FRAKT_STILLE_KROKER = [
     'woocommerce_cart_item_removed',
     'woocommerce_cart_emptied',
     'woocommerce_after_cart_item_quantity_update',
+    // Kupongen på den midlertidige kurven er ikke en kunde som bruker en kode.
+    'woocommerce_applied_coupon',
+    'woocommerce_removed_coupon',
 ];
 
 /** Metoder som ikke er hjemlevering, og som derfor aldri skjules. */
@@ -78,6 +94,10 @@ function amendo_frakt_rest(WP_REST_Request $request) {
     $inn = amendo_frakt_valider($request->get_json_params());
     if (is_wp_error($inn)) {
         return new WP_REST_Response(['code' => $inn->get_error_code(), 'message' => $inn->get_error_message()], 400);
+    }
+    // Se toppen av fila: kupongsjekk bare for kassen, aldri for hvem som helst.
+    if ($inn['kupong'] !== '' && $grense['gjenstaar'] !== null) {
+        return new WP_REST_Response(['code' => 'amendo_frakt_kupong_krever_secret', 'message' => '«kupong» krever X-Amendo-Kasse-Secret.'], 403);
     }
 
     $svar = new WP_REST_Response(amendo_frakt_beregn($inn), 200);
@@ -161,7 +181,70 @@ function amendo_frakt_valider($body) {
     $sted = $body['sted'] ?? '';
     $sted = is_string($sted) ? mb_substr(sanitize_text_field($sted), 0, 100) : '';
 
-    return ['varer' => $rene, 'land' => $land, 'postnummer' => $postnummer, 'sted' => $sted];
+    $kupong = $body['kupong'] ?? '';
+    if (!is_string($kupong) || mb_strlen($kupong) > 50) {
+        return new WP_Error('amendo_frakt_ugyldig', '«kupong» må være en tekst på maks 50 tegn.');
+    }
+    $kupong = wc_format_coupon_code($kupong);
+
+    $epost = $body['epost'] ?? '';
+    $epost = is_string($epost) ? sanitize_email($epost) : '';
+
+    return ['varer' => $rene, 'land' => $land, 'postnummer' => $postnummer, 'sted' => $sted, 'kupong' => $kupong, 'epost' => $epost];
+}
+
+/**
+ * Legger kupongen på den midlertidige kurven og sier om den holdt.
+ *
+ * `apply_coupon()` validerer som WooCommerce sin kasse (finnes, utløpt,
+ * minstebeløp, bruksgrense, produkter). Grense per kunde og «tillatte
+ * e-poster» kan bare sjekkes med en e-post — det gjør
+ * `check_customer_coupons()`, som fjerner kupongen igjen om den ikke holder.
+ * Feilmeldingen er WooCommerce sin egen (oversatt), uten HTML.
+ *
+ * @return array{gyldig: bool, melding: ?string}
+ */
+function amendo_frakt_kupong(string $kode, string $epost) {
+    $kurv = WC()->cart;
+    $gyldig = (bool) $kurv->apply_coupon($kode);
+    if ($gyldig && $epost !== '') {
+        $kurv->check_customer_coupons(['billing_email' => $epost]);
+        $gyldig = $kurv->has_discount($kode);
+    }
+    /*
+     * ⚠⚠ GRENSE PER KUNDE FOR GJESTER — sjekket her, ikke overlatt til
+     * WooCommerce. check_customer_coupons() fjernet IKKE en kupong som e-posten
+     * alt hadde brukt (målt i Playground, WooCommerce 9), og en ordre laget
+     * via REST for en gjest (customer_id 0) håndhever heller ikke grensen.
+     * Uten denne sjekken kunne én e-post brukt «én per kunde»-koden igjen og
+     * igjen. Teller både `_used_by` (get_used_by) og datalagerets oppslag.
+     */
+    if ($gyldig && $epost !== '') {
+        $k = new WC_Coupon($kode);
+        $grense = (int) $k->get_usage_limit_per_user();
+        if ($grense > 0) {
+            $e = strtolower($epost);
+            $brukt = count(array_filter($k->get_used_by(), function($v) use ($e) { return strtolower((string) $v) === $e; }));
+            $lager = $k->get_data_store();
+            if ($lager && method_exists($lager, 'get_usage_by_email')) {
+                $brukt = max($brukt, (int) $lager->get_usage_by_email($k, $e));
+            }
+            if ($brukt >= $grense) {
+                $kurv->remove_coupon($kode);
+                wc_clear_notices();
+                return ['gyldig' => false, 'melding' => html_entity_decode(wp_strip_all_tags(__('Coupon usage limit has been reached.', 'woocommerce')), ENT_QUOTES, 'UTF-8')];
+            }
+        }
+    }
+    $feil = wc_get_notices('error');
+    wc_clear_notices();
+    $melding = null;
+    if (!$gyldig && $feil) {
+        $forste = reset($feil);
+        $tekst = is_array($forste) ? ($forste['notice'] ?? '') : (string) $forste;
+        $melding = trim(html_entity_decode(wp_strip_all_tags($tekst), ENT_QUOTES, 'UTF-8')) ?: null;
+    }
+    return ['gyldig' => $gyldig, 'melding' => $melding];
 }
 
 /** Heltall fra JSON (5 eller "5"), ellers null. */
@@ -226,6 +309,19 @@ function amendo_frakt_beregn(array $inn) {
         }
         wc_clear_notices();
 
+        // Kupongen FØR totalene: rabatten skal med i gratis-frakt-grensen og
+        // i frakten (kupong med gratis frakt).
+        // ⚠ `?? ''`: amendo_frakt_beregn() kalles også direkte, med den gamle
+        // formen uten kupong/epost. Uten standardverdi ble null sendt videre,
+        // og amendo_frakt_kupong(string) kastet en TypeError (fatal 500).
+        $kode  = (string) ($inn['kupong'] ?? '');
+        $epost = (string) ($inn['epost'] ?? '');
+        $kupongsvar = null;
+        if ($kode !== '') {
+            if ($epost !== '') $kunde->set_billing_email($epost);
+            $kupongsvar = amendo_frakt_kupong($kode, $epost);
+        }
+
         $wc->cart->calculate_totals();
         $pakker = $wc->shipping()->get_packages();
         $pakke  = $pakker ? reset($pakker) : null;
@@ -233,13 +329,30 @@ function amendo_frakt_beregn(array $inn) {
         $alternativer = $pakke ? amendo_frakt_alternativer($pakke['rates'] ?? []) : [];
         $gratis = $pakke ? amendo_frakt_gratisgrense($pakke) : ['grense' => null, 'gjenstaar' => null];
 
-        return [
+        $svar = [
             'valuta'               => get_woocommerce_currency(),
             'alternativer'         => $alternativer,
             'gratis_frakt_grense'  => $gratis['grense'],
             'gjenstaar_til_gratis' => $gratis['gjenstaar'],
             'avviste_varer'        => $avviste,
         ];
+        if ($kupongsvar !== null) {
+            $kurv = $wc->cart;
+            $gyldig = $kupongsvar['gyldig'] && $kurv->has_discount($kode);
+            $desimaler = wc_get_price_decimals();
+            $kupong = $gyldig ? new WC_Coupon($kode) : null;
+            $svar['kupong'] = [
+                'kode'            => $kode,
+                'gyldig'          => $gyldig,
+                'melding'         => $gyldig ? null : ($kupongsvar['melding'] ?: 'Rabattkoden kan ikke brukes.'),
+                'rabatt_eks_mva'  => $gyldig ? round((float) $kurv->get_discount_total(), $desimaler) : 0,
+                'rabatt_inkl_mva' => $gyldig ? round((float) $kurv->get_discount_total() + (float) $kurv->get_discount_tax(), $desimaler) : 0,
+                'gratis_frakt'    => $gyldig && $kupong && $kupong->get_free_shipping(),
+            ];
+            // Varene FØR rabatt, inkl. MVA — det kunden ser i kurven.
+            $svar['varer_inkl_mva'] = round((float) $kurv->get_subtotal() + (float) $kurv->get_subtotal_tax(), $desimaler);
+        }
+        return $svar;
     } finally {
         // Nøyaktig de samme lytterne tilbake; noe som ble lagt til underveis
         // hørte til den midlertidige kurven.
