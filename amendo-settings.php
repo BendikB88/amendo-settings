@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.7
+ * Version: 1.4.8
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.7');
+define('AMENDO_SETTINGS_VERSION', '1.4.8');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -19,6 +19,7 @@ require_once AMENDO_SETTINGS_PATH . 'includes/hemmeligheter.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/revalidering.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/kategorirad.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/betaling.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/bedrift.php';
 
 /**
  * Kapabiliteten som gir tilgang til Amendo-admin: meny, varsler og lagring.
