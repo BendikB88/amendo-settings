@@ -8,6 +8,11 @@ jQuery(function($) {
         $('#tab-' + $(this).data('tab')).addClass('active');
     });
 
+    // #b2b, #avdelinger osv. i adressen åpner den fanen — B2B-handlingene
+    // sender tilbake hit, og varselet om avdelinger lenker til #avdelinger.
+    var fraAdresse = (window.location.hash || '').slice(1);
+    if (fraAdresse) $('.amendo-tab').filter(function() { return $(this).data('tab') === fraAdresse; }).first().trigger('click');
+
     // ── Secrets (Kasse, Revalidering) ──
     // Knappen er type="button" og ikke submit: ellers ville Enter i et
     // hvilket som helst felt (den står før «Lagre») generert en ny secret.
@@ -332,5 +337,26 @@ $(document).on('click', '.slett-kategori-regel', function() {
         if (!$bilde.length) return;
         if (url) $bilde.attr('src', url).prop('hidden', false);
         else $bilde.attr('src', '').prop('hidden', true);
+    });
+
+    // ── B2B (bare når modulen er på — se includes/moduler/b2b.php) ──
+    // Godkjenning gir innsyn i bedriftens bestillinger; spør først.
+    $(document).on('click', '.b2b-bekreft', function(e) {
+        if (!confirm($(this).data('bekreft'))) e.preventDefault();
+    });
+
+    // Radene trenger ikke være nummerert fortløpende; serveren leser dem i
+    // rekkefølge. Telleren sørger bare for at to rader aldri deler navn.
+    var nesteGruppe = $('.kundegruppe-liste .kundegruppe-rad').length;
+    $('#legg-til-kundegruppe').on('click', function() {
+        var mal = $('.kundegruppe-mal').html();
+        if (!mal) return;
+        var $rad = $(mal.replace(/__i__/g, String(nesteGruppe++)));
+        $('.kundegruppe-liste').append($rad);
+        $rad.find('input[type="text"]').first().trigger('focus');
+    });
+
+    $(document).on('click', '.kundegruppe-fjern', function() {
+        $(this).closest('.kundegruppe-rad').remove();
     });
 });

@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.11
+ * Version: 1.4.12
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.11');
+define('AMENDO_SETTINGS_VERSION', '1.4.12');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -22,6 +22,8 @@ require_once AMENDO_SETTINGS_PATH . 'includes/betaling.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/bedrift.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/ubetalte.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/kortbetaling.php';
+// Sist: laster modulene som er på, og de kan bruke alt over.
+require_once AMENDO_SETTINGS_PATH . 'includes/moduler.php';
 
 /**
  * Kapabiliteten som gir tilgang til Amendo-admin: meny, varsler og lagring.
@@ -220,6 +222,10 @@ add_action('admin_post_amendo_save_settings', function() {
         amendo_forside_lagre($_POST);
     }
 
+    // Moduler — se includes/moduler.php. Modulene som er på lagrer sitt eget.
+    amendo_moduler_lagre($_POST);
+    do_action('amendo_lagre_innstillinger', $_POST);
+
     // LiteSpeed og frontenden — se includes/revalidering.php.
     $oppdateres = amendo_revalider_etter_lagring();
 
@@ -371,7 +377,7 @@ function amendo_get_settings() {
         ];
     }
 
-    return [
+    $svar = [
         'butikk' => [
             'navn'    => get_option('amendo_butikk_navn', get_bloginfo('name')),
             'slagord' => get_option('amendo_butikk_slagord', get_bloginfo('description')),
@@ -397,7 +403,12 @@ function amendo_get_settings() {
         'meny'       => $meny,
         'kategorirad' => amendo_kategorirad_rest(),
         'avdelinger' => $avdelinger,
+        // Nøklene til modulene som er på — se includes/moduler.php.
+        'moduler'    => amendo_moduler_aktive(),
     ];
+
+    // Modulene som er på legger til sine felter her.
+    return apply_filters('amendo_settings_svar', $svar);
 }
 
 function amendo_get_side($request) {
@@ -476,6 +487,8 @@ function amendo_settings_page() {
                 <button type="button" class="amendo-tab" data-tab="meny">🔗 Meny</button>
                 <button type="button" class="amendo-tab" data-tab="avdelinger">📍 Avdelinger</button>
                 <button type="button" class="amendo-tab" data-tab="levering">🚚 Levering & Henting</button>
+                <?php do_action('amendo_admin_faner'); ?>
+                <button type="button" class="amendo-tab" data-tab="moduler">⚙️ Moduler</button>
             </div>
 
             <!-- BUTIKK -->
@@ -878,10 +891,16 @@ function amendo_settings_page() {
                 </div>
             </div>
 
+            <?php do_action('amendo_admin_paneler'); ?>
+
+            <!-- MODULER — se includes/moduler.php -->
+            <?php amendo_moduler_fane(); ?>
+
             <div class="amendo-footer">
                 <button type="submit" class="amendo-btn-primary">Lagre innstillinger</button>
             </div>
         </form>
+        <?php do_action('amendo_admin_etter_skjema'); ?>
     </div>
     <?php
 }
