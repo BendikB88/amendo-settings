@@ -13,17 +13,15 @@ add_action('rest_api_init', function() {
     };
 
     /**
-     * { aktive: [..]|null, manuelt: [..]|null, auto: bool, kundegrupper: {..}|null }
-     * null sletter optionen. auto=false sperrer auto-sjekken (transienten satt).
+     * { aktive: [..]|null, kundegrupper: {..}|null, slett_brukere: bool }
+     * null sletter optionen.
      */
     $r('/moduler-klargjor', function($req) {
         $p = $req->get_json_params() ?: [];
-        foreach (['aktive' => 'amendo_moduler', 'manuelt' => 'amendo_moduler_manuelt', 'kundegrupper' => 'amendo_kundegruppe_config'] as $k => $opt) {
+        foreach (['aktive' => 'amendo_moduler', 'kundegrupper' => 'amendo_kundegruppe_config'] as $k => $opt) {
             if (!array_key_exists($k, $p)) continue;
             if ($p[$k] === null) delete_option($opt); else update_option($opt, wp_json_encode($p[$k]));
         }
-        if (!empty($p['auto'])) delete_transient('amendo_moduler_auto_sjekket');
-        else set_transient('amendo_moduler_auto_sjekket', 1, HOUR_IN_SECONDS);
         // Brukerne fra forrige sak: alle med org.nr eller søknad.
         if (!empty($p['slett_brukere'])) {
             require_once ABSPATH . 'wp-admin/includes/user.php';
@@ -41,7 +39,6 @@ add_action('rest_api_init', function() {
         $settings = rest_do_request(new WP_REST_Request('GET', '/amendo-settings/v1/settings'))->get_data();
         return [
             'aktive'             => amendo_moduler_aktive(),
-            'manuelt'            => amendo_moduler_les('amendo_moduler_manuelt'),
             'b2b_lastet'         => function_exists('amendo_b2b_behandle'),
             'krok_faner'         => (bool) has_action('amendo_admin_faner'),
             'krok_paneler'       => (bool) has_action('amendo_admin_paneler'),
@@ -74,7 +71,6 @@ add_action('rest_api_init', function() {
         remove_filter('wp_redirect', $kast);
         return [
             'aktive'       => json_decode((string) get_option('amendo_moduler', 'null'), true),
-            'manuelt'      => json_decode((string) get_option('amendo_moduler_manuelt', 'null'), true),
             'kundegrupper' => json_decode((string) get_option('amendo_kundegruppe_config', 'null'), true),
             // Som lagret: json_decode + REST gjør `{}` om til `[]`.
             'kundegrupper_raa' => get_option('amendo_kundegruppe_config', null),

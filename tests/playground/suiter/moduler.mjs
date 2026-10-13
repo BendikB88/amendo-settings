@@ -20,7 +20,7 @@ await get('/amendo-test/v1/setup');
 
 // ── Av ──────────────────────────────────────────────────────────────────────
 console.log('Modulen av (standard)');
-await klargjor({ aktive: null, manuelt: null, kundegrupper: null, auto: false, slett_brukere: true });
+await klargjor({ aktive: null, kundegrupper: null, slett_brukere: true });
 let t = await inspiser();
 sjekk('ingen moduler på', JSON.stringify(t.aktive) === '[]', t.aktive);
 for (const k of B2B_KROKER) sjekk(`av: ${k} er ikke registrert`, t[k] === false, t[k]);
@@ -34,7 +34,7 @@ sjekk('av: /settings har fortsatt alle de gamle feltene', ['butikk', 'design', '
 
 // ── På ──────────────────────────────────────────────────────────────────────
 console.log('\nModulen på');
-await klargjor({ aktive: ['b2b'], auto: false });
+await klargjor({ aktive: ['b2b'] });
 t = await inspiser();
 for (const k of B2B_KROKER) sjekk(`på: ${k} er registrert`, t[k] === true, t[k]);
 sjekk('på: B2B-fane, -panel og egne skjemaer i admin', t.html_fane_b2b && t.html_panel_b2b && t.html_skjema_b2b && t.html_kundegrupper);
@@ -42,58 +42,38 @@ sjekk('på: bryteren vises avkrysset', t.html_b2b_avkrysset);
 sjekk('på: /settings har moduler: ["b2b"]', JSON.stringify(t.settings_json.moduler) === '["b2b"]', t.settings_json.moduler);
 sjekk('på: kundegruppe_config er {} (objekt) når tom', t.kundegruppe_config_raa === '{}', t.kundegruppe_config_raa);
 
+// ── Oppdatering hos en butikk som ikke har bedt om B2B ──────────────────────
+// emmk, Dorothea o.l.: kunder med org.nr (fra en annen plugin) og til og med en
+// søknad skal IKKE slå på noe. Ingen auto-aktivering — se includes/moduler.php.
+console.log('\nOppdatering: org.nr hos kundene slår ikke på B2B');
+await bruker('annen-plugin@example.com', { billing_org_number: '923207074' });
+await bruker('soker@example.com', { _orgnr_soknad: '998877665', _b2b_status: 'venter' });
+await klargjor({ aktive: null });
+for (let i = 0; i < 3; i++) {
+  t = await inspiser();
+  sjekk(`forespørsel ${i + 1}: fortsatt av, moduler: [] og ingen B2B-kroker`, JSON.stringify(t.aktive) === '[]' && JSON.stringify(t.settings_json.moduler) === '[]' && B2B_KROKER.every(k => t[k] === false), t.aktive);
+}
+await klargjor({ slett_brukere: true });
+
 // ── Bryteren ────────────────────────────────────────────────────────────────
 console.log('\nBryteren i admin');
-let l = await lagre({ butikk_navn: 'Test', moduler: { finnes: '1', var: { b2b: '1' }, paa: { b2b: '1' } } });
-sjekk('urørt bryter (på): fortsatt på, ikke manuelt valgt', JSON.stringify(l.aktive) === '["b2b"]' && !(l.manuelt || []).includes('b2b'), l);
+await klargjor({ aktive: ['b2b'] });
+let l = await lagre({ butikk_navn: 'Test', moduler: { finnes: '1', paa: { b2b: '1' } } });
+sjekk('avkrysset: på', JSON.stringify(l.aktive) === '["b2b"]', l);
 l = await lagre({ butikk_navn: 'Test' });
 sjekk('lagring uten moduler[finnes]: ingenting endres', JSON.stringify(l.aktive) === '["b2b"]', l);
-l = await lagre({ butikk_navn: 'Test', moduler: { finnes: '1', var: { b2b: '1' } } });
-sjekk('slått av: av og manuelt valgt', JSON.stringify(l.aktive) === '[]' && JSON.stringify(l.manuelt) === '["b2b"]', l);
+l = await lagre({ butikk_navn: 'Test', moduler: { finnes: '1' } });
+sjekk('ikke avkrysset: av', JSON.stringify(l.aktive) === '[]', l);
 t = await inspiser();
 sjekk('slått av: neste forespørsel har ingen B2B-kroker', B2B_KROKER.every(k => t[k] === false) && !t.settings_har_kundegruppe_config);
-await klargjor({ aktive: [], manuelt: null, auto: false });
-l = await lagre({ butikk_navn: 'Test', moduler: { finnes: '1', var: { b2b: '0' } } });
-sjekk('urørt bryter (av): fortsatt av, ikke manuelt valgt', JSON.stringify(l.aktive) === '[]' && !(l.manuelt || []).includes('b2b'), l);
-l = await lagre({ butikk_navn: 'Test', moduler: { finnes: '1', var: { b2b: '0' }, paa: { b2b: '1' } } });
-sjekk('slått på: på og manuelt valgt', JSON.stringify(l.aktive) === '["b2b"]' && JSON.stringify(l.manuelt) === '["b2b"]', l);
-l = await lagre({ butikk_navn: 'Test', moduler: { finnes: '1', var: { b2b: '1', ukjent: '0' }, paa: { b2b: '1', ukjent: '1' } } });
+l = await lagre({ butikk_navn: 'Test', moduler: { finnes: '1', paa: { b2b: '1' } } });
+sjekk('slått på igjen: på', JSON.stringify(l.aktive) === '["b2b"]', l);
+l = await lagre({ butikk_navn: 'Test', moduler: { finnes: '1', paa: { b2b: '1', ukjent: '1' } } });
 sjekk('ukjent modulnøkkel lagres ikke', JSON.stringify(l.aktive) === '["b2b"]', l);
-
-// ── Auto-aktivering ─────────────────────────────────────────────────────────
-console.log('\nAuto-aktivering');
-await klargjor({ aktive: null, manuelt: null, auto: true, slett_brukere: true });
-t = await inspiser();
-sjekk('ingen kunde med org.nr: forblir av', JSON.stringify(t.aktive) === '[]', t.aktive);
-
-await bruker('auto@example.com', { billing_org_number: '' });
-await klargjor({ aktive: null, manuelt: null, auto: true });
-t = await inspiser();
-sjekk('tomt billing_org_number teller ikke', JSON.stringify(t.aktive) === '[]', t.aktive);
-
-await bruker('auto@example.com', { billing_org_number: '923207074' });
-await klargjor({ aktive: null, manuelt: null, auto: false });
-t = await inspiser();
-sjekk('kunde med org.nr, men sjekket nylig: venter til neste sjekk', JSON.stringify(t.aktive) === '[]', t.aktive);
-
-await klargjor({ aktive: null, manuelt: null, auto: true });
-// ⚠ Sjekken kjører i FØRSTE forespørsel etter klargjor — og det er ikke
-// nødvendigvis vår: Playground kan ha en WP-Cron-forespørsel i gang samtidig,
-// som da tar sjekken, mens vår leser optionen før den er skrevet. Les derfor
-// opptil tre ganger. (Sett i full kjøring 06.10.2026; isolert slår den på i
-// første kall.)
-for (let i = 0; i < 3; i++) { t = await inspiser(); if (t.aktive.length) break; }
-sjekk('kunde med org.nr: B2B slås på', JSON.stringify(t.aktive) === '["b2b"]', t.aktive);
-sjekk('auto: modulen er lastet og med i /settings', JSON.stringify(t.settings_json.moduler) === '["b2b"]' && t.settings_har_kundegruppe_config && t.b2b_lastet, t.settings_json.moduler);
-sjekk('auto: regnes ikke som manuelt valg', !t.manuelt.includes('b2b'), t.manuelt);
-
-await klargjor({ aktive: [], manuelt: ['b2b'], auto: true });
-t = await inspiser();
-sjekk('slått av manuelt: auto slår den ikke på igjen', JSON.stringify(t.aktive) === '[]', t.aktive);
 
 // ── Rettigheter per kundegruppe ─────────────────────────────────────────────
 console.log('\nRettigheter per kundegruppe');
-await klargjor({ aktive: ['b2b'], manuelt: null, kundegrupper: null, auto: false, slett_brukere: true });
+await klargjor({ aktive: ['b2b'], kundegrupper: null, slett_brukere: true });
 l = await lagre({ kundegruppe_config: { finnes: '1', rader: [
   { id: '3', navn: 'Faktura 25 % rabatt', faktura: '1' },
   { id: '14', navn: 'Bedriftskunder', faktura: '1', b2b: '1' },
@@ -129,7 +109,7 @@ sjekk('/settings: tom tabell er {}', t.kundegruppe_config_raa === '{}', t.kundeg
 
 // ── Søknader ────────────────────────────────────────────────────────────────
 console.log('\nSøknader');
-await klargjor({ aktive: ['b2b'], kundegrupper: null, auto: false, slett_brukere: true });
+await klargjor({ aktive: ['b2b'], kundegrupper: null, slett_brukere: true });
 const venter = { _b2b_status: 'venter', _b2b_sokt: '2026-10-01T08:00:00Z' };
 await bruker('godkjenn@example.com', { ...venter, _orgnr_soknad: '923 207 074', billing_company: 'Garçon AS', first_name: 'Kari', _tellixGroupId: '14' });
 await bruker('avvis@example.com', { ...venter, _orgnr_soknad: '998877665', billing_company: '<script>alert(1)</script>' });
@@ -196,7 +176,7 @@ sjekk('søkeordet escapes', !html.includes('"><img src=x>'));
 
 // ── Kundegruppe-tabellen i admin ────────────────────────────────────────────
 console.log('\nKundegruppe-tabellen i admin');
-await klargjor({ kundegrupper: { '14': { navn: 'Bedriftskunder', faktura: 1, b2b: 1, helsebygget: 0, helsebygget_rabatt: 0 } }, auto: false });
+await klargjor({ kundegrupper: { '14': { navn: 'Bedriftskunder', faktura: 1, b2b: 1, helsebygget: 0, helsebygget_rabatt: 0 } } });
 html = await side();
 const gruppeDel = html.slice(html.indexOf('id="b2b-kundegrupper"'));
 const idVerdier = [...gruppeDel.split('<template')[0].matchAll(/name="kundegruppe_config\[rader\]\[(\d+)\]\[id\]" value="([^"]*)"/g)].map(x => x[2]);
@@ -232,5 +212,5 @@ if (knapp) {
 sjekk('knappene peker på det egne skjemaet utenfor hovedskjemaet', [...d.querySelectorAll('.b2b-bekreft')].every(k => k.getAttribute('form') === 'amendo-b2b-behandle') && !d.querySelector('form[action*="admin-post.php"] #amendo-b2b-behandle') && !!d.querySelector('#amendo-b2b-behandle input[name=_wpnonce]'));
 
 // Rydd: modulen av igjen, så suiter som kjøres etter mot samme server ikke påvirkes.
-await klargjor({ aktive: null, manuelt: null, kundegrupper: null, auto: false, slett_brukere: true });
+await klargjor({ aktive: null, kundegrupper: null, slett_brukere: true });
 ferdig();
