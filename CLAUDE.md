@@ -58,6 +58,7 @@ parallelt. Hver suite tar 2–10 minutter (Playground bruker 10–25 s per kall)
 | `kategorirad` | kategoriraden: lagring, `/settings`, admin, jsdom, varsel ved endring |
 | `cargonizer` | `_lcfwc_*` på REST-ordrer, mot stubber |
 | `betaling` | `/adyen-session` og `/gateway-redirect` mot stubber av Amendo Gateway og Vipps |
+| `kortbetaling` | 1.4.11: `/adyen-metoder` (bare kort, cache), `/adyen-betal` (beløp fra ordren i øre, reference `<host>/<id>`, splitt, Authorised/Refused/3DS, beløpsavvik), `/adyen-detaljer` (merchantReference må høre til ordren), fail-closed secret (503/403), alltid JSON |
 | `bedrift-sok` | `/bedrift-sok`: oppslag på org.nr, tilgang (fail-closed), rate limit, og at svaret ikke lekker personopplysninger |
 
 Ny suite: legg en fil i `suiter/`, og sett den inn i `REKKEFOLGE` i `kjor.mjs`
