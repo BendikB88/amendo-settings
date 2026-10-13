@@ -206,34 +206,41 @@ function amendo_frakt_valider($body) {
  */
 function amendo_frakt_kupong(string $kode, string $epost) {
     $kurv = WC()->cart;
-    $gyldig = (bool) $kurv->apply_coupon($kode);
-    if ($gyldig && $epost !== '') {
-        $kurv->check_customer_coupons(['billing_email' => $epost]);
-        $gyldig = $kurv->has_discount($kode);
+    /*
+     * ⚠⚠ GRENSE PER KUNDE TELLER BARE BETALTE ORDRER (1.4.10) — og telles HER,
+     * ikke av WooCommerce. WooCommerce teller `_used_by` og «tentative»
+     * holdinger, og der står også kundens egne UBETALTE forsøk: kassen lager
+     * ordren før betalingen, så en kunde som la til koden, gikk tilbake og
+     * endret noe, fikk «Coupon usage limit has been reached.» for sin egen
+     * ubetalte ordre og kom ikke videre (07.10.2026). Grensen nulles derfor
+     * mens WooCommerce validerer (filteret gjelder bare «view»-konteksten),
+     * og amendo_kupong_betalt_bruk() teller processing/completed/on-hold.
+     */
+    $uten_grense = function() { return 0; };
+    add_filter('woocommerce_coupon_get_usage_limit_per_user', $uten_grense, PHP_INT_MAX);
+    try {
+        $gyldig = (bool) $kurv->apply_coupon($kode);
+        if ($gyldig && $epost !== '') {
+            // «Tillatte e-poster» (e-postbegrensningen) sjekkes her.
+            $kurv->check_customer_coupons(['billing_email' => $epost]);
+            $gyldig = $kurv->has_discount($kode);
+        }
+    } finally {
+        remove_filter('woocommerce_coupon_get_usage_limit_per_user', $uten_grense, PHP_INT_MAX);
     }
     /*
-     * ⚠⚠ GRENSE PER KUNDE FOR GJESTER — sjekket her, ikke overlatt til
-     * WooCommerce. check_customer_coupons() fjernet IKKE en kupong som e-posten
-     * alt hadde brukt (målt i Playground, WooCommerce 9), og en ordre laget
-     * via REST for en gjest (customer_id 0) håndhever heller ikke grensen.
-     * Uten denne sjekken kunne én e-post brukt «én per kunde»-koden igjen og
-     * igjen. Teller både `_used_by` (get_used_by) og datalagerets oppslag.
+     * En ordre laget via REST for en gjest (customer_id 0) håndhever ikke
+     * grensen selv (målt i Playground, WooCommerce 9) — denne sjekken er
+     * porten. Uten e-post kan grensen ikke sjekkes; /api/ordre sender alltid
+     * ordrens e-post.
      */
     if ($gyldig && $epost !== '') {
         $k = new WC_Coupon($kode);
-        $grense = (int) $k->get_usage_limit_per_user();
-        if ($grense > 0) {
-            $e = strtolower($epost);
-            $brukt = count(array_filter($k->get_used_by(), function($v) use ($e) { return strtolower((string) $v) === $e; }));
-            $lager = $k->get_data_store();
-            if ($lager && method_exists($lager, 'get_usage_by_email')) {
-                $brukt = max($brukt, (int) $lager->get_usage_by_email($k, $e));
-            }
-            if ($brukt >= $grense) {
-                $kurv->remove_coupon($kode);
-                wc_clear_notices();
-                return ['gyldig' => false, 'melding' => html_entity_decode(wp_strip_all_tags(__('Coupon usage limit has been reached.', 'woocommerce')), ENT_QUOTES, 'UTF-8')];
-            }
+        $grense = (int) $k->get_usage_limit_per_user('edit');
+        if ($grense > 0 && amendo_kupong_betalt_bruk($k->get_code(), $epost) >= $grense) {
+            $kurv->remove_coupon($kode);
+            wc_clear_notices();
+            return ['gyldig' => false, 'melding' => html_entity_decode(wp_strip_all_tags(__('Coupon usage limit has been reached.', 'woocommerce')), ENT_QUOTES, 'UTF-8')];
         }
     }
     $feil = wc_get_notices('error');
@@ -245,6 +252,31 @@ function amendo_frakt_kupong(string $kode, string $epost) {
         $melding = trim(html_entity_decode(wp_strip_all_tags($tekst), ENT_QUOTES, 'UTF-8')) ?: null;
     }
     return ['gyldig' => $gyldig, 'melding' => $melding];
+}
+
+/**
+ * Hvor mange BETALTE ordrer e-posten har med koden. Ubetalte forsøk
+ * (pending), feilede og avbrutte teller ikke. Statusene kan endres med
+ * filteret `amendo_kupong_tellende_statuser`.
+ */
+function amendo_kupong_betalt_bruk(string $kode, string $epost): int {
+    $statuser = apply_filters('amendo_kupong_tellende_statuser', ['processing', 'completed', 'on-hold']);
+    $kode = wc_format_coupon_code($kode);
+    $epost = strtolower(trim($epost));
+    $ordrer = wc_get_orders([
+        'type'          => 'shop_order',
+        'status'        => $statuser,
+        'billing_email' => $epost,
+        'limit'         => 200,
+        'return'        => 'objects',
+    ]);
+    $brukt = 0;
+    foreach ($ordrer as $ordre) {
+        if (strtolower((string) $ordre->get_billing_email()) !== $epost) continue;
+        $koder = array_map('wc_format_coupon_code', $ordre->get_coupon_codes());
+        if (in_array($kode, $koder, true)) $brukt++;
+    }
+    return $brukt;
 }
 
 /** Heltall fra JSON (5 eller "5"), ellers null. */

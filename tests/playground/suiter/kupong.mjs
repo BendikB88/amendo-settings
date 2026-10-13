@@ -41,7 +41,24 @@ sjekk('melding uten HTML', !/<[a-z]/i.test(r.json.kupong?.melding || ''), r.json
 
 console.log('\nGrense per kunde og e-postbegrensning');
 r = await frakt(kurv(2, { kupong: 'perkunde', epost: 'brukt@example.com' }), med);
-sjekk('perkunde, brukt e-post → ugyldig', r.json.kupong?.gyldig === false, r.json.kupong);
+sjekk('perkunde, betalt ordre (completed) → ugyldig', r.json.kupong?.gyldig === false, r.json.kupong);
+r = await frakt(kurv(2, { kupong: 'perkunde', epost: 'BRUKT@example.com' }), med);
+sjekk('… også med store bokstaver i e-posten', r.json.kupong?.gyldig === false, r.json.kupong);
+r = await frakt(kurv(2, { kupong: 'perkunde', epost: 'venter@example.com' }), med);
+sjekk('perkunde, on-hold → ugyldig', r.json.kupong?.gyldig === false, r.json.kupong);
+
+console.log('\nGrense per kunde teller bare BETALTE ordrer (1.4.10)');
+for (const [navn, status] of [['ubetalt', 'pending'], ['feilet', 'failed'], ['avbrutt', 'cancelled'], ['spokelse', 'bare _used_by, ingen ordre']]) {
+  r = await frakt(kurv(2, { kupong: 'perkunde', epost: `${navn}@example.com` }), med);
+  sjekk(`perkunde, ${status} → gyldig`, r.json.kupong?.gyldig === true && r.json.kupong?.rabatt_inkl_mva === 50, r.json.kupong);
+}
+
+console.log('\nUbetalte headless-ordrer avbrytes etter «Hold lager» (1.4.10)');
+const f = await get('/amendo-test/v1/ubetalt-filter');
+sjekk('_nextjs_kasse, rest-api → avbrytes', f.headless === true, f);
+sjekk('rest-api uten merke → ikke (som før)', f.rest_uten_merke === false, f);
+sjekk('WooCommerce sin kasse → avbrytes (som før)', f.kasse === true, f);
+sjekk('_nextjs_kasse MED transaction_id → aldri', f.headless_transaksjon === false, f);
 r = await frakt(kurv(2, { kupong: 'perkunde', epost: 'ny@example.com' }), med);
 sjekk('perkunde, ny e-post → gyldig', r.json.kupong?.gyldig === true, r.json.kupong);
 r = await frakt(kurv(2, { kupong: 'bare-kari', epost: 'ola@example.com' }), med);

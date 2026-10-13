@@ -46,7 +46,7 @@ parallelt. Hver suite tar 2–10 minutter (Playground bruker 10–25 s per kall)
 
 | Suite | Dekker |
 |---|---|
-| `kupong` | `/frakt` med `kupong`/`epost` (1.4.9): gyldig/utløpt/minstebeløp/bruksgrense/per e-post/e-postbegrensning, rabatt, gratis-frakt-grensen MED rabatten, kupong-gratisfrakt, 403 uten secret |
+| `kupong` | `/frakt` med `kupong`/`epost` (1.4.9): gyldig/utløpt/minstebeløp/bruksgrense/per e-post/e-postbegrensning, rabatt, gratis-frakt-grensen MED rabatten, kupong-gratisfrakt, 403 uten secret. 1.4.10: grense per kunde teller bare betalte ordrer (processing/completed/on-hold — ikke pending/failed/cancelled eller `_used_by` alene), og `woocommerce_cancel_unpaid_order` for `_nextjs_kasse`-ordrer |
 | `frakt-beregning` | `/frakt`: priser, MVA, gratis-frakt-grense, skjul betalt frakt, avviste varer |
 | `frakt-validering` | `/frakt`: input-validering, ingen sesjon/cookie/persistent kurv, ekte kurv urørt |
 | `rate-limit` | `/frakt`: grense per IP, unntak med `X-Amendo-Kasse-Secret` |

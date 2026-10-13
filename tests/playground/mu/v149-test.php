@@ -6,6 +6,11 @@
 if (!defined('ABSPATH')) exit;
 
 add_action('rest_api_init', function() {
+    register_rest_route('amendo-test/v1', '/ubetalt-filter', [
+        'methods'             => 'GET',
+        'permission_callback' => '__return_true',
+        'callback'            => 'amendo_test_ubetalt_filter',
+    ]);
     register_rest_route('amendo-test/v1', '/kuponger', [
         'methods'             => 'GET,POST',
         'permission_callback' => '__return_true',
@@ -32,10 +37,25 @@ function amendo_test_kuponger(WP_REST_Request $req) {
         'bare-kari' => $lag('bare-kari', function($k) { $k->set_discount_type('percent'); $k->set_amount(10); $k->set_email_restrictions(['kari@example.com']); }),
         'fraktfri'  => $lag('fraktfri', function($k) { $k->set_discount_type('fixed_cart'); $k->set_amount(0); $k->set_free_shipping(true); }),
     ];
-    // «perkunde» er brukt én gang av brukt@example.com.
-    $perkunde = new WC_Coupon($ider['perkunde']);
-    if (!in_array('brukt@example.com', $perkunde->get_used_by(), true)) {
-        add_post_meta($ider['perkunde'], '_used_by', 'brukt@example.com');
+    /*
+     * «perkunde» (én per kunde) med EKTE ordrer i hver status (1.4.10: bare
+     * betalte teller). brukt@ = completed, venter@ = on-hold, ubetalt@ =
+     * pending, feilet@ = failed, avbrutt@ = cancelled. Og spokelse@ står bare
+     * i `_used_by`, uten ordre — teller heller ikke.
+     */
+    if (!get_option('amendo_test_perkunde_ordrer')) {
+        foreach (['brukt' => 'completed', 'venter' => 'on-hold', 'ubetalt' => 'pending', 'feilet' => 'failed', 'avbrutt' => 'cancelled'] as $navn => $status) {
+            $o = wc_create_order();
+            $produkter = wc_get_products(['limit' => 1, 'status' => 'publish', 'type' => 'simple']);
+            if ($produkter) $o->add_product($produkter[0], 1);
+            $o->set_billing_email("$navn@example.com");
+            $o->apply_coupon('perkunde');
+            $o->calculate_totals();
+            $o->set_status($status);
+            $o->save();
+        }
+        add_post_meta($ider['perkunde'], '_used_by', 'spokelse@example.com');
+        update_option('amendo_test_perkunde_ordrer', 1);
     }
 
     $krav = $req->get_param('fs_requires');
@@ -51,4 +71,23 @@ function amendo_test_kuponger(WP_REST_Request $req) {
         }
     }
     return $ider;
+}
+
+/** Hva `woocommerce_cancel_unpaid_order` svarer for ulike ordrer (1.4.10). */
+function amendo_test_ubetalt_filter() {
+    $lag = function(array $meta, string $via, string $transaksjon = '') {
+        $o = wc_create_order();
+        $o->set_created_via($via);
+        foreach ($meta as $k => $v) $o->update_meta_data($k, $v);
+        if ($transaksjon !== '') $o->set_transaction_id($transaksjon);
+        $o->save();
+        return $o;
+    };
+    $svar = function($o) { return apply_filters('woocommerce_cancel_unpaid_order', 'checkout' === $o->get_created_via(), $o); };
+    return [
+        'headless'           => $svar($lag(['_nextjs_kasse' => '1'], 'rest-api')),
+        'rest_uten_merke'    => $svar($lag([], 'rest-api')),
+        'kasse'              => $svar($lag([], 'checkout')),
+        'headless_transaksjon' => $svar($lag(['_nextjs_kasse' => '1'], 'rest-api', 'PSP123')),
+    ];
 }
