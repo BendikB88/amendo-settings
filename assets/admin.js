@@ -302,6 +302,33 @@ $(document).on('click', '.slett-kategori-regel', function() {
         });
     }
 
+    // ── Forside: rekkefølgen på seksjonene ──
+    // Samme mønster som kategoriraden: dra, eller ↑/↓ (tastatur og mobil).
+    // `name` nummereres på nytt så PHP får lista i den nye rekkefølgen.
+    function seksjonerNummerer() {
+        $('.forside-seksjon-liste > .forside-seksjon-rad').each(function(i) {
+            $(this).find('input').each(function() {
+                var name = $(this).attr('name');
+                if (name) $(this).attr('name', name.replace(/^forside\[seksjoner\]\[\d+\]/, 'forside[seksjoner][' + i + ']'));
+            });
+        });
+    }
+
+    $(document).on('click', '.forside-seksjon-opp, .forside-seksjon-ned', function() {
+        var $rad = $(this).closest('.forside-seksjon-rad');
+        if ($(this).hasClass('forside-seksjon-opp')) $rad.prev('.forside-seksjon-rad').before($rad);
+        else $rad.next('.forside-seksjon-rad').after($rad);
+        seksjonerNummerer();
+    });
+
+    if ($.fn.sortable) {
+        $('.forside-seksjon-liste').sortable({
+            handle: '.meny-drag',
+            axis: 'y',
+            update: seksjonerNummerer
+        });
+    }
+
     // ── Forside: mediefelt (bilde og video) ──
     // URL-feltet er synlig og kan redigeres direkte (en video kan ligge på en
     // CDN); knappen fyller det fra mediebiblioteket.

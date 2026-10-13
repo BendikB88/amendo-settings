@@ -97,6 +97,7 @@ parallelt. Hver suite tar 2–10 minutter (Playground bruker 10–25 s per kall)
 | `admin-js` | `admin.js` i jsdom: secrets, mediebiblioteket |
 | `revalidering` | LiteSpeed-tømming og `/api/revalidate` ved lagring |
 | `bilder-og-sider` | bilde-ID/-mål på forsiden; WP-sider varsler frontenden |
+| `forside` | 1.4.13: forsideseksjonene (kategorifliser, historie, lokasjoner, galleri, tall-merke, nyhetsoverskrift, nyhetsbrev) og `seksjoner`: rensing, maks rader, kategorier validert, bildemål, ACF-reserve FELT FOR FELT (mot en ACF-stubb som bare gjelder denne suiten), at en lagring hos en ACF-butikk ikke endrer svaret, og at svaret uten nye felter er som i 1.4.12; admin-fanen og admin.js i jsdom |
 | `kategorirad` | kategoriraden: lagring, `/settings`, admin, jsdom, varsel ved endring |
 | `cargonizer` | `_lcfwc_*` på REST-ordrer, mot stubber |
 | `betaling` | `/adyen-session` og `/gateway-redirect` mot stubber av Amendo Gateway og Vipps |
