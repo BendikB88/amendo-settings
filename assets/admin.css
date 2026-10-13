@@ -414,3 +414,20 @@
     .kategorirad-rad { flex-wrap: wrap; }
     .meny-rad input.kategorirad-kortnavn { flex: 1 1 100%; }
 }
+
+/* Moduler og B2B */
+.amendo-modul { padding-bottom: 16px; border-bottom: 1px solid #f3f4f6; }
+.amendo-modul:last-child { border-bottom: 0; padding-bottom: 0; }
+.amendo-tabell { width: 100%; border-collapse: collapse; font-size: 13px; }
+.amendo-tabell th { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: #6b7280; padding: 8px; border-bottom: 1px solid #e5e7eb; }
+.amendo-tabell td { padding: 8px; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+.amendo-tabell td input[type="text"] { width: 100%; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; }
+.b2b-knapper { white-space: nowrap; display: flex; gap: 6px; }
+.b2b-sok { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.b2b-sok input { flex: 1; max-width: 360px; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; }
+.amendo-b2b-melding { border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; font-size: 13px; }
+.amendo-b2b-melding-ok { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
+.amendo-b2b-melding-feil { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+@media (max-width: 782px) {
+    .amendo-tabell { display: block; overflow-x: auto; }
+}
