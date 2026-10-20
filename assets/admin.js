@@ -178,6 +178,8 @@ $('#legg-til-periode').on('click', function() {
         '<input type="date" name="stengte_perioder[' + i + '][fra]">' +
         '<span>→</span>' +
         '<input type="date" name="stengte_perioder[' + i + '][til]">' +
+        // Avdelingsvelgeren fra malen (PHP har listen over avdelinger).
+        ($('#steng-avdeling-mal').html() || '').split('__i__').join(String(i)) +
         '<button type="button" class="slett-periode amendo-btn-danger">Slett</button>' +
         '</div>'
     );

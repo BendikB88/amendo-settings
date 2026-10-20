@@ -8,8 +8,8 @@ nye felter i REST-svar er greit, endrede eller fjernede er det ikke.
 ## Struktur
 
 - `amendo-settings.php` — header/versjon, admin-meny, lagring (`admin_post_amendo_save_settings`), REST-ruter, admin-siden.
-- `includes/` — én fil per område: `forside.php`, `frakt.php`, `cargonizer.php`, `hemmeligheter.php`, `revalidering.php`, `kategorirad.php`, `betaling.php`, `bedrift.php`. Hver fil har en toppkommentar som forklarer hvorfor den ser ut som den gjør — les den før du endrer.
-- `includes/moduler.php` + `includes/moduler/<nøkkel>.php` — moduler som slås av og på under ⚙️ Moduler (se under).
+- `includes/` — én fil per område: `forside.php`, `frakt.php`, `cargonizer.php`, `hemmeligheter.php`, `revalidering.php`, `kategorirad.php`, `betaling.php`, `bedrift.php`, `stengte.php`. Hver fil har en toppkommentar som forklarer hvorfor den ser ut som den gjør — les den før du endrer.
+- `includes/moduler.php` + `includes/moduler/<nøkkel>.php` — moduler som slås av og på under ⚙️ Moduler (se under). I dag: `b2b` (med `b2b-tellix.php`: kundegrupper og rabatt fra Tellix via amendo-core) og `henting` (hentelinje, ordrefilter og hentedato til Tellix).
 - `assets/admin.js` — kjører i wp-admin der jQuery er i noConflict-modus: all kode inne i `jQuery(function($) { … })`.
 - `tests/playground/` — testene (under). Er `export-ignore` og skal aldri med i pluginen hos butikkene.
 
@@ -104,6 +104,8 @@ parallelt. Hver suite tar 2–10 minutter (Playground bruker 10–25 s per kall)
 | `kortbetaling` | 1.4.11: `/adyen-metoder` (bare kort, cache), `/adyen-betal` (beløp fra ordren i øre, reference `<host>/<id>`, splitt, Authorised/Refused/3DS, beløpsavvik), `/adyen-detaljer` (merchantReference må høre til ordren), fail-closed secret (503/403), alltid JSON |
 | `bedrift-sok` | `/bedrift-sok`: oppslag på org.nr, tilgang (fail-closed), rate limit, og at svaret ikke lekker personopplysninger |
 | `moduler` | ⚙️ Moduler: av/på (ingen kroker/felter/ruter når av), bryteren, av som standard også når kundene har org.nr (oppdatering hos emmk o.l.); B2B: søknader (godkjenn/avvis, tilgang, nonce), aktive kunder og søk, rettigheter per kundegruppe i `/settings`, jsdom |
+| `tellix` | 1.4.14: `rabatt/kunde/{id}` og `rabatt/telefon` mot en stubb av `\Amendo\Customers` med samme svarform som amendo-core 3.0.1 (`mu/tellix-stub.php`): fail-closed secret, gruppe fra Tellix og ikke den lagrede (og skrevet tilbake), aldri tømt ved feil, Helsebygget-grupper uten nettbutikk-rabatt, 503 når de ikke er satt opp, `amendo-store-groups` («helsebygget»), gruppenavn bare via transient, de to Helsebygget-kildene (lagret liste vinner, tom tabell forblir {}), grense per nummer, mellomlagring når Tellix er treg (> 2 s), uten amendo-core, B2B av, admin (skrivebeskyttet, feltet bare for administrator), ingen kundedata i loggen |
+| `henting` | 1.4.14: stengte perioder per avdeling (lagring, `/leveringsregler`, admin, jsdom); modulen «Hentedato på ordrer»: av = ingenting endres, hentelinjen på ordreside/kolonne/e-post/WP Overnight, `amendo_tellix_delivery_fields` (pairs, sjekket mot en kopi av get_delivery_datetime() fra gatewayen 1.36.13), datofilter (nye Y-m-d og gamle d/m/Y) og hentested i HPOS-ordrelisten |
 
 Ny suite: legg en fil i `suiter/`, og sett den inn i `REKKEFOLGE` i `kjor.mjs`
 (ukjente filer kjøres sist i alfabetisk rekkefølge).

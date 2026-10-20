@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.13
+ * Version: 1.4.14
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.13');
+define('AMENDO_SETTINGS_VERSION', '1.4.14');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -22,6 +22,7 @@ require_once AMENDO_SETTINGS_PATH . 'includes/betaling.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/bedrift.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/ubetalte.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/kortbetaling.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/stengte.php';
 // Sist: laster modulene som er på, og de kan bruke alt over.
 require_once AMENDO_SETTINGS_PATH . 'includes/moduler.php';
 
@@ -152,22 +153,8 @@ add_action('admin_post_amendo_save_settings', function() {
     $ikke_dager = isset($_POST['henting_ikke_dager']) ? array_map('sanitize_text_field', $_POST['henting_ikke_dager']) : [];
     update_option('amendo_henting_ikke_dager', json_encode($ikke_dager));
 
-    // Stengte perioder
-    if (isset($_POST['stengte_perioder'])) {
-        $perioder = [];
-        foreach ($_POST['stengte_perioder'] as $p) {
-            if (!empty($p['fra']) && !empty($p['til'])) {
-                $perioder[] = [
-                    'label' => sanitize_text_field($p['label'] ?? ''),
-                    'fra'   => sanitize_text_field($p['fra']),
-                    'til'   => sanitize_text_field($p['til']),
-                ];
-            }
-        }
-        update_option('amendo_stengte_perioder', json_encode($perioder));
-    } else {
-        update_option('amendo_stengte_perioder', '[]');
-    }
+    // Stengte perioder, med avdeling — se includes/stengte.php.
+    amendo_stengte_lagre($_POST);
 
     // Kategori-regler
     if (isset($_POST['kategori_regler'])) {
@@ -327,7 +314,7 @@ function amendo_get_leveringsregler() {
     $global_tidsluke          = intval(get_option('amendo_henting_tidsluke', 60));
     $global_maks              = intval(get_option('amendo_henting_maks_per_tidsluke', 10));
     $ikke_dager               = json_decode(get_option('amendo_henting_ikke_dager', '["lørdag","søndag"]'), true) ?: ['lørdag','søndag'];
-    $stengte                  = json_decode(get_option('amendo_stengte_perioder', '[]'), true) ?: [];
+    $stengte                  = amendo_stengte_perioder();
     $kat_regler               = json_decode(get_option('amendo_kategori_regler', '[]'), true) ?: [];
     $avdelinger_raw           = json_decode(get_option('amendo_avdelinger', '[]'), true) ?: [];
 
@@ -782,7 +769,7 @@ function amendo_settings_page() {
                         <label>Stengte perioder</label>
                         <div id="stengte-perioder-liste">
                             <?php
-                            $perioder = json_decode(get_option('amendo_stengte_perioder','[]'), true) ?: [];
+                            $perioder = amendo_stengte_perioder();
                             foreach ($perioder as $i => $p):
                             ?>
                             <div class="steng-rad">
@@ -790,10 +777,12 @@ function amendo_settings_page() {
                                 <input type="date" name="stengte_perioder[<?php echo $i; ?>][fra]" value="<?php echo esc_attr($p['fra']??''); ?>">
                                 <span>→</span>
                                 <input type="date" name="stengte_perioder[<?php echo $i; ?>][til]" value="<?php echo esc_attr($p['til']??''); ?>">
+                                <?php amendo_stengte_velger($i, $p['avdeling']); ?>
                                 <button type="button" class="slett-periode amendo-btn-danger">Slett</button>
                             </div>
                             <?php endforeach; ?>
                         </div>
+                        <template id="steng-avdeling-mal"><?php amendo_stengte_velger('__i__', ''); ?></template>
                         <button type="button" class="amendo-btn-secondary" id="legg-til-periode" style="margin-top:8px">+ Legg til periode</button>
                     </div>
                 </div>

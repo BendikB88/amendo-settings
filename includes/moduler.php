@@ -51,6 +51,12 @@ function amendo_moduler_alle() {
             'beskrivelse' => 'Bedriftskunder: søknader til godkjenning, oversikt over aktive bedriftskunder, og faktura og andre rettigheter per kundegruppe.',
             'fil'         => 'includes/moduler/b2b.php',
         ],
+        'henting' => [
+            'navn'        => 'Hentedato på ordrer',
+            'ikon'        => '🧺',
+            'beskrivelse' => 'Én hentelinje («Henting: Stasjonen, onsdag 21.10 kl. 11:15») på ordresiden, i ordrelisten, i e-postene og i WP Overnight Order List; filter på hentedato og hentested; og hentedatoen til Tellix. Gjelder bare ordrer med _hentedato fra den nye kassen.',
+            'fil'         => 'includes/moduler/henting.php',
+        ],
     ];
 }
 

@@ -175,6 +175,11 @@ function amendo_b2b_kundegrupper_lagre(array $post) {
     $inn = $post['kundegruppe_config'] ?? null;
     if (!is_array($inn) || empty($inn['finnes'])) return;
 
+    // ⚠ Er Helsebygget-lista lagret (b2b-tellix.php), gjelder bare den:
+    // Helsebygget-kolonnene her er da skrivebeskyttet, og det som stod lagret
+    // fra før blir stående urørt (så det gjelder igjen om lista fjernes).
+    $liste  = amendo_helsebygget_lagret();
+    $gammel = amendo_b2b_kundegrupper();
     $ut = [];
     foreach (is_array($inn['rader'] ?? null) ? $inn['rader'] : [] as $rad) {
         if (!is_array($rad)) continue;
@@ -185,6 +190,10 @@ function amendo_b2b_kundegrupper_lagre(array $post) {
         foreach (array_keys(AMENDO_B2B_RETTIGHETER) as $r) $gruppe[$r] = !empty($rad[$r]) ? 1 : 0;
         // Satsen betyr bare noe med Helsebygget-rett — samme tolkning som frontenden.
         $gruppe['helsebygget_rabatt'] = $gruppe['helsebygget'] ? min(100, max(0, (int) ($rad['helsebygget_rabatt'] ?? 0))) : 0;
+        if ($liste !== null) {
+            $gruppe['helsebygget']        = (int) !empty($gammel[$id]['helsebygget']);
+            $gruppe['helsebygget_rabatt'] = (int) ($gammel[$id]['helsebygget_rabatt'] ?? 0);
+        }
 
         // ⚠ Rad uten rettigheter lagres ikke — se toppen av fila.
         if (!$gruppe['faktura'] && !$gruppe['b2b'] && !$gruppe['helsebygget']) continue;
@@ -207,6 +216,22 @@ add_filter('amendo_settings_svar', function($svar) {
             'helsebygget'        => (int) !empty($g['helsebygget']),
             'helsebygget_rabatt' => (int) ($g['helsebygget_rabatt'] ?? 0),
         ];
+    }
+    // Helsebygget-lista, når den er lagret, er eneste kilde for Helsebygget.
+    // ⚠ Bare når tabellen alt har rader: en tom tabell skal forbli `{}`, ellers
+    // bytter frontenden kilde for faktura og B2B-visning også — se toppen.
+    $liste = amendo_helsebygget_lagret();
+    if ($liste !== null && $config) {
+        foreach ($config as $id => &$g) {
+            $g['helsebygget']        = (int) array_key_exists((int) $id, $liste);
+            $g['helsebygget_rabatt'] = (int) round($liste[(int) $id] ?? 0);
+        }
+        unset($g);
+        foreach ($liste as $id => $pst) {
+            if (!isset($config[(string) $id])) {
+                $config[(string) $id] = ['faktura' => 0, 'b2b' => 0, 'helsebygget' => 1, 'helsebygget_rabatt' => (int) round($pst)];
+            }
+        }
     }
     // Objekt, også når det er tomt: `{}`, ikke `[]`.
     $svar['kundegruppe_config'] = (object) $config;
@@ -236,15 +261,22 @@ add_action('amendo_admin_etter_skjema', function() {
 /** Én rad i kundegruppe-tabellen. `$i` er et tall, eller «__i__» i malen. */
 function amendo_b2b_gruppe_rad($i, $id, array $g, $antall) {
     $p = "kundegruppe_config[rader][$i]";
+    $liste = amendo_helsebygget_lagret();
+    if ($liste !== null) {
+        // Skrivebeskyttet: Helsebygget-lista nederst gjelder.
+        $g['helsebygget'] = $id !== '' && array_key_exists((int) $id, $liste);
+        $g['helsebygget_rabatt'] = $g['helsebygget'] ? $liste[(int) $id] : 0;
+    }
     ?>
     <tr class="kundegruppe-rad">
         <td><input type="text" name="<?php echo esc_attr($p); ?>[id]" value="<?php echo esc_attr($id); ?>" placeholder="ID" size="5" aria-label="Gruppe-ID"></td>
         <td><input type="text" name="<?php echo esc_attr($p); ?>[navn]" value="<?php echo esc_attr($g['navn'] ?? ''); ?>" placeholder="Navn (bare her)" aria-label="Navn"></td>
         <td class="kundegruppe-antall"><?php echo $antall === null ? '' : esc_html((string) $antall); ?></td>
         <?php foreach (AMENDO_B2B_RETTIGHETER as $r => $etikett): ?>
-            <td><input type="checkbox" name="<?php echo esc_attr($p . "[$r]"); ?>" value="1" <?php checked(!empty($g[$r])); ?> aria-label="<?php echo esc_attr($etikett); ?>"></td>
+            <?php $laast = $r === 'helsebygget' && $liste !== null; ?>
+            <td><input type="checkbox" <?php echo $laast ? 'disabled class="kundegruppe-laast"' : 'name="' . esc_attr($p . "[$r]") . '"'; ?> value="1" <?php checked(!empty($g[$r])); ?> aria-label="<?php echo esc_attr($etikett); ?>"></td>
         <?php endforeach; ?>
-        <td><input type="number" name="<?php echo esc_attr($p); ?>[helsebygget_rabatt]" value="<?php echo esc_attr(!empty($g['helsebygget']) ? (int) ($g['helsebygget_rabatt'] ?? 0) : ''); ?>" min="0" max="100" style="width:70px" aria-label="Helsebygget-rabatt i prosent"></td>
+        <td><input type="number" <?php echo $liste !== null ? 'disabled class="kundegruppe-laast"' : 'name="' . esc_attr($p) . '[helsebygget_rabatt]"'; ?> value="<?php echo esc_attr(!empty($g['helsebygget']) ? (int) ($g['helsebygget_rabatt'] ?? 0) : ''); ?>" min="0" max="100" style="width:70px" aria-label="Helsebygget-rabatt i prosent"></td>
         <td><button type="button" class="amendo-btn-danger kundegruppe-fjern">Fjern</button></td>
     </tr>
     <?php
@@ -348,6 +380,9 @@ add_action('amendo_admin_paneler', function() {
             <h2>Faktura og rettigheter per kundegruppe</h2>
             <p class="amendo-desc">Hva hver kundegruppe (<code>_tellixGroupId</code>) får på nettsiden. Rader uten noen avkrysning lagres ikke.</p>
             <p class="amendo-advarsel">⚠ Så lenge tabellen er tom, bruker nettsiden innstillingene sine i Vercel. Når den første raden lagres, bruker den <strong>bare denne tabellen</strong> — fyll derfor inn alle gruppene som skal ha faktura, B2B-visning eller Helsebygget-rabatt før du lagrer.</p>
+            <?php if (amendo_helsebygget_lagret() !== null): ?>
+                <p class="field-help amendo-helsebygget-merknad">Helsebygget og rabatt er skrivebeskyttet her: <a href="#b2b-helsebygget">Helsebygget-gruppene</a> nederst i fanen gjelder.</p>
+            <?php endif; ?>
             <input type="hidden" name="kundegruppe_config[finnes]" value="1">
             <table class="amendo-tabell kundegruppe-tabell">
                 <thead><tr><th>ID</th><th>Navn</th><th>Kunder</th><?php foreach (AMENDO_B2B_RETTIGHETER as $etikett): ?><th><?php echo esc_html($etikett); ?></th><?php endforeach; ?><th>Rabatt %</th><th></th></tr></thead>
@@ -366,6 +401,11 @@ add_action('amendo_admin_paneler', function() {
             <button type="button" class="amendo-btn-secondary" id="legg-til-kundegruppe" style="margin-top:12px">+ Legg til kundegruppe</button>
             <p class="field-help">Rabatten gjelder bare på Helsebygget-siden, og bare for grupper med Helsebygget krysset av.</p>
         </div>
+
+        <?php // Kundegrupper fra Tellix og Helsebygget-gruppene — se includes/moduler/b2b-tellix.php. ?>
+        <?php do_action('amendo_b2b_kort'); ?>
     </div>
     <?php
 });
+
+require_once __DIR__ . '/b2b-tellix.php';
