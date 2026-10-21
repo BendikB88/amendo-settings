@@ -62,3 +62,45 @@ if (get_option('amendo_test_tellix') === '1' && !class_exists(__NAMESPACE__ . '\
         }
     }
 }
+
+// Sidestørrelsen for vår egen kopi av kundelista (b2b-tellix.php), så testene
+// kan sjekke at alle sider hentes.
+add_filter('amendo_tellix_side', function($n) {
+    $s = (int) get_option('amendo_test_tellix_side', 0);
+    return $s > 0 ? $s : $n;
+});
+
+/**
+ * Stubb av \Amendo\TellixAPI::call_API for v2/customer/list (offset/limit), med
+ * Tellix sin rå form (customerId, customerUuid, customerGroupId, name, email,
+ * phoneNumber, isActive, isDeleted). Testkundene er de samme som
+ * search_customers bruker. amendo_test_tellix_api_feil = siden (1, 2 …) som
+ * svarer feil.
+ */
+if (get_option('amendo_test_tellix') === '1' && !class_exists(__NAMESPACE__ . '\TellixAPI')) {
+    class TellixAPI {
+        public static function call_API($endpoint, $data, $method, $dept = 1, $creds = null) {
+            if ($endpoint !== 'v2/customer/list') return null;
+            $kall = (int) get_option('amendo_test_tellix_api_kall', 0) + 1;
+            update_option('amendo_test_tellix_api_kall', $kall, false);
+            $offsets = get_option('amendo_test_tellix_api_offsets', []);
+            $offsets[] = (int) $data['offset'];
+            update_option('amendo_test_tellix_api_offsets', $offsets, false);
+            $side = intdiv((int) $data['offset'], max(1, (int) $data['limit'])) + 1;
+            if ((int) get_option('amendo_test_tellix_api_feil', 0) === $side) return (object) ['code' => 500];
+            $alle = array_map(function($k) {
+                return (object) [
+                    'customerId'      => $k['id'],
+                    'customerUuid'    => $k['uuid'] ?? '',
+                    'customerGroupId' => $k['groupId'] ?? null,
+                    'name'            => $k['name'] ?? '',
+                    'email'           => $k['email'] ?? null,
+                    'phoneNumber'     => $k['phone'] ?? '',
+                    'isActive'        => $k['aktiv'] ?? true,
+                    'isDeleted'       => $k['slettet'] ?? false,
+                ];
+            }, json_decode((string) get_option('amendo_test_tellix_kunder', '[]'), true) ?: []);
+            return (object) ['code' => 200, 'total_count' => count($alle), 'customers' => array_slice($alle, (int) $data['offset'], (int) $data['limit'])];
+        }
+    }
+}

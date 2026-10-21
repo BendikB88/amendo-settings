@@ -13,6 +13,18 @@ jQuery(function($) {
     var fraAdresse = (window.location.hash || '').slice(1);
     if (fraAdresse) $('.amendo-tab').filter(function() { return $(this).data('tab') === fraAdresse; }).first().trigger('click');
 
+    // ── Hvilke faner er endret? (includes/lagring.php) ──
+    // Hele skjemaet sendes ved hver lagring. En del som lagres som én option
+    // (forsiden, menyen …) lagres bare når noe i den er endret HER: første
+    // skriving, valg, klikk på en knapp eller dra-og-slipp setter flagget.
+    $(document).on('input change sortupdate', '[data-amendo-del]', function(e) {
+        if ($(e.target).is('.amendo-endret')) return;
+        $(this).find('> .amendo-endret').val('1');
+    });
+    $(document).on('click', '[data-amendo-del] button', function() {
+        $(this).closest('[data-amendo-del]').find('> .amendo-endret').val('1');
+    });
+
     // ── Secrets (Kasse, Revalidering) ──
     // Knappen er type="button" og ikke submit: ellers ville Enter i et
     // hvilket som helst felt (den står før «Lagre») generert en ny secret.

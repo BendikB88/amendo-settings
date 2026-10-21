@@ -723,7 +723,8 @@ function amendo_forside_fane() {
     $u = amendo_forside_utvidet_for_skjema();
     $kategorier = amendo_forside_kategorivalg();
     ?>
-    <div class="amendo-panel" id="tab-forside">
+    <div class="amendo-panel" id="tab-forside" data-amendo-del="forside">
+        <?php amendo_lagring_felt('forside'); ?>
         <?php if ($kilde === 'acf'): ?>
             <div class="amendo-card amendo-info">
                 <strong>Innholdet under er hentet fra ACF-feltene på forsiden.</strong>

@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.15
+ * Version: 1.4.16
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.15');
+define('AMENDO_SETTINGS_VERSION', '1.4.16');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -23,6 +23,7 @@ require_once AMENDO_SETTINGS_PATH . 'includes/bedrift.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/ubetalte.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/kortbetaling.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/stengte.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/lagring.php';
 // Sist: laster modulene som er på, og de kan bruke alt over.
 require_once AMENDO_SETTINGS_PATH . 'includes/moduler.php';
 
@@ -105,6 +106,14 @@ add_action('admin_post_amendo_save_settings', function() {
     // hver apostrof én skråstrek til for hver lagring.
     $_POST = wp_unslash($_POST);
 
+    // ⚠ En fane endret i nettleseren, men endret på serveren etter at siden
+    // ble lastet: avvis HELE lagringen — se includes/lagring.php.
+    $konflikter = amendo_lagring_konflikter($_POST);
+    if ($konflikter) {
+        wp_redirect(admin_url('admin.php?page=amendo-settings&avvist=' . rawurlencode(implode(',', $konflikter))));
+        exit;
+    }
+
     $fields = ['butikk_navn', 'butikk_slagord', 'butikk_logo', 'butikk_orgnr', 'design_primærfarge', 'design_sekundærfarge', 'kontakt_telefon', 'kontakt_epost', 'sosiale_instagram', 'sosiale_facebook', 'sosiale_tiktok'];
     foreach ($fields as $field) {
         if (isset($_POST[$field])) {
@@ -120,7 +129,7 @@ add_action('admin_post_amendo_save_settings', function() {
     }
 
     // Meny
-    if (isset($_POST['meny_elementer'])) {
+    if (isset($_POST['meny_elementer']) && amendo_lagring_skal_lagre($_POST, 'meny')) {
         $meny = [];
         foreach ($_POST['meny_elementer'] as $item) {
             if (!empty($item['label'])) {
@@ -134,7 +143,7 @@ add_action('admin_post_amendo_save_settings', function() {
     }
 
     // Kategoriraden — se includes/kategorirad.php.
-    amendo_kategorirad_lagre($_POST);
+    if (amendo_lagring_skal_lagre($_POST, 'kategorirad')) amendo_kategorirad_lagre($_POST);
 
     // Levering & Henting
     $levering_fields = ['henting_aktiv','henting_tidsluke','henting_maks_per_tidsluke',
@@ -154,10 +163,12 @@ add_action('admin_post_amendo_save_settings', function() {
     update_option('amendo_henting_ikke_dager', json_encode($ikke_dager));
 
     // Stengte perioder, med avdeling — se includes/stengte.php.
-    amendo_stengte_lagre($_POST);
+    if (amendo_lagring_skal_lagre($_POST, 'stengte')) amendo_stengte_lagre($_POST);
 
     // Kategori-regler
-    if (isset($_POST['kategori_regler'])) {
+    if (!amendo_lagring_skal_lagre($_POST, 'kategoriregler')) {
+        // Urørt i nettleseren: står som den er.
+    } elseif (isset($_POST['kategori_regler'])) {
         $regler = [];
         foreach ($_POST['kategori_regler'] as $r) {
             if (!empty($r['kategori_id'])) {
@@ -175,7 +186,7 @@ add_action('admin_post_amendo_save_settings', function() {
     }
 
     // Avdelinger
-    if (isset($_POST['avdelinger'])) {
+    if (isset($_POST['avdelinger']) && amendo_lagring_skal_lagre($_POST, 'avdelinger')) {
         $avdelinger = [];
         $dager = ['mandag', 'tirsdag', 'onsdag', 'torsdag', 'fredag', 'lørdag', 'søndag'];
         foreach ($_POST['avdelinger'] as $avd) {
@@ -203,9 +214,9 @@ add_action('admin_post_amendo_save_settings', function() {
         update_option('amendo_avdelinger', json_encode($avdelinger));
     }
 
-    // Forside — se includes/forside.php. Hele skjemaet sendes ved hver lagring,
-    // så også en lagring fra en annen fane skriver forsidefeltene.
-    if (isset($_POST['forside'])) {
+    // Forside — se includes/forside.php. Hele skjemaet sendes ved hver lagring;
+    // forsiden skrives bare når Forside-fanen er endret (includes/lagring.php).
+    if (isset($_POST['forside']) && amendo_lagring_skal_lagre($_POST, 'forside')) {
         amendo_forside_lagre($_POST);
     }
 
@@ -458,6 +469,9 @@ function amendo_settings_page() {
     <div class="amendo-wrap">
         <div class="amendo-header">
             <div class="amendo-logo">⚙️ Amendo Innstillinger</div>
+            <?php if (!empty($_GET['avvist'])):
+                $deler = array_map('amendo_lagring_navn', array_filter(explode(',', sanitize_text_field(wp_unslash((string) $_GET['avvist'])))));
+            ?><div class="amendo-notice amendo-notice-avvist">⚠ Ikke lagret: <?php echo esc_html(implode(', ', $deler)); ?> ble endret et annet sted etter at du åpnet siden. Last siden på nytt og gjør endringen igjen — ellers ville den andre endringen blitt overskrevet.</div><?php endif; ?>
             <?php if ($saved): ?><div class="amendo-notice">✓ Innstillinger lagret<?php if (isset($_GET['oppdateres'])): ?> <span class="amendo-notice-ekstra">Nettsiden oppdateres i løpet av et minutt</span><?php endif; ?></div><?php endif; ?>
         </div>
 
@@ -586,7 +600,8 @@ function amendo_settings_page() {
 
             <!-- MENY -->
             <div class="amendo-panel" id="tab-meny">
-                <div class="amendo-card">
+                <div class="amendo-card" data-amendo-del="meny">
+                    <?php amendo_lagring_felt('meny'); ?>
                     <h2>Navigasjonsmeny</h2>
                     <p class="amendo-desc">Bestem hvilke sider som vises i menyen og i hvilken rekkefølge.</p>
                     <div id="meny-liste">
@@ -606,7 +621,8 @@ function amendo_settings_page() {
             </div>
 
             <!-- AVDELINGER -->
-            <div class="amendo-panel" id="tab-avdelinger">
+            <div class="amendo-panel" id="tab-avdelinger" data-amendo-del="avdelinger">
+                <?php amendo_lagring_felt('avdelinger'); ?>
                 <div class="amendo-card">
                     <h2>Avdelinger</h2>
                     <p class="amendo-desc">Legg til alle butikkens lokasjoner med åpningstider og bilde.</p>
@@ -765,7 +781,8 @@ function amendo_settings_page() {
                         </div>
                         <p class="field-help">Typisk lørdag og søndag</p>
                     </div>
-                    <div class="amendo-field">
+                    <div class="amendo-field" data-amendo-del="stengte">
+                        <?php amendo_lagring_felt('stengte'); ?>
                         <label>Stengte perioder</label>
                         <div id="stengte-perioder-liste">
                             <?php
@@ -838,7 +855,8 @@ function amendo_settings_page() {
                     </div>
                 </div>
 
-                <div class="amendo-card">
+                <div class="amendo-card" data-amendo-del="kategoriregler">
+                    <?php amendo_lagring_felt('kategoriregler'); ?>
                     <h2>Kategori-overstyringer</h2>
                     <p class="amendo-desc">Overstyr prosesseringstid eller steng bestilling for spesifikke kategorier i perioder.</p>
                     <div id="kategori-regler-liste">

@@ -168,7 +168,8 @@ function amendo_kategorirad_admin() {
     $lagret = amendo_kategorirad_lagret();
     $kategorier = amendo_kategorirad_toppnivaa();
     ?>
-    <div class="amendo-card" id="kategorirad">
+    <div class="amendo-card" id="kategorirad" data-amendo-del="kategorirad">
+        <?php amendo_lagring_felt('kategorirad'); ?>
         <h2>Kategoriraden</h2>
         <p class="amendo-desc">Kategoriene som vises i menyen, i denne rekkefølgen. Dra eller bruk pilene for å flytte. En uthevet kategori vises alltid sist. Kategorier som ikke er valgt her eller under, havner i «Mer».</p>
         <input type="hidden" name="kategorirad[finnes]" value="1">

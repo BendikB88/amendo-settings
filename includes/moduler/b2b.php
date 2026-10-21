@@ -173,7 +173,7 @@ function amendo_b2b_grupper_hos_kunder() {
 /** Fra $_POST. Gjør ingenting uten markøren `kundegruppe_config[finnes]`. */
 function amendo_b2b_kundegrupper_lagre(array $post) {
     $inn = $post['kundegruppe_config'] ?? null;
-    if (!is_array($inn) || empty($inn['finnes'])) return;
+    if (!is_array($inn) || empty($inn['finnes']) || !amendo_lagring_skal_lagre($post, 'kundegrupper')) return;
 
     // ⚠ Er Helsebygget-lista lagret (b2b-tellix.php), gjelder bare den:
     // Helsebygget-kolonnene her er da skrivebeskyttet, og det som stod lagret
@@ -203,6 +203,10 @@ function amendo_b2b_kundegrupper_lagre(array $post) {
 }
 
 add_action('amendo_lagre_innstillinger', 'amendo_b2b_kundegrupper_lagre');
+
+// Kundegruppe-tabellen er én samlet option — se includes/lagring.php.
+add_filter('amendo_lagring_deler', function($deler) { return $deler + ['kundegrupper' => 'amendo_kundegruppe_config']; });
+add_filter('amendo_lagring_navn', function($navn) { return $navn + ['kundegrupper' => 'B2B-kundegrupper']; });
 
 // ── /settings ───────────────────────────────────────────────────────────────
 
@@ -376,7 +380,8 @@ add_action('amendo_admin_paneler', function() {
             <?php endif; ?>
         </div>
 
-        <div class="amendo-card" id="b2b-kundegrupper">
+        <div class="amendo-card" id="b2b-kundegrupper" data-amendo-del="kundegrupper">
+            <?php amendo_lagring_felt('kundegrupper'); ?>
             <h2>Faktura og rettigheter per kundegruppe</h2>
             <p class="amendo-desc">Hva hver kundegruppe (<code>_tellixGroupId</code>) får på nettsiden. Rader uten noen avkrysning lagres ikke.</p>
             <p class="amendo-advarsel">⚠ Så lenge tabellen er tom, bruker nettsiden innstillingene sine i Vercel. Når den første raden lagres, bruker den <strong>bare denne tabellen</strong> — fyll derfor inn alle gruppene som skal ha faktura, B2B-visning eller Helsebygget-rabatt før du lagrer.</p>

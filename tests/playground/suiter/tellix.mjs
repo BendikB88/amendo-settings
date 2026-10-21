@@ -38,16 +38,18 @@ const GRUPPER = [
   { id: 1, name: 'Bedriftsrabatt 10 %', discountPercent: 10 },
 ];
 const KUNDER = [
-  { id: 'T1', uuid: 'U1', groupId: 14, email: 'bedrift@example.com', phone: '+4741128080' },
-  { id: 'T2', uuid: 'U2', groupId: 4, email: 'nav@example.com', phone: '+4790000001' },
-  { id: 'T5', uuid: 'U5', groupId: 14, email: 'annen@tellix.no', phone: '+4790000005' },
+  { id: 'T1', uuid: 'U1', groupId: 14, email: 'Bedrift@Example.com', phone: '+4741128080', name: 'Kari  Nordmann Hansen' },
+  { id: 'T2', uuid: 'U2', groupId: 4, email: 'nav@example.com', phone: '90000001', name: 'Ola' },
+  { id: 'T5', uuid: 'U5', groupId: 14, email: '4790000005@dummy.com', phone: '+47 900 00 005', name: 'Per Persen' },
   { id: 'T3', uuid: 'U3', groupId: 3, email: 'faktura@example.com', phone: '' },
   { id: 'T6', uuid: 'U6', groupId: null, email: 'nullgruppe@example.com', phone: '' },
+  { id: 'T7', uuid: 'U7', groupId: 14, email: 'inaktiv@example.com', phone: '+4793000007', aktiv: false },
+  { id: 'T8', uuid: 'U8', groupId: 14, email: 'slettet@example.com', phone: '+4793000008', slettet: true },
 ];
 const HELSEBYGGET = { 4: 40, 5: 40, 6: 40, 7: 40, 19: 50 };
 
 await opt({ amendo_kasse_secret: SECRET });
-await klargjor({ moduler: ['b2b'], tellix: '1', grupper: GRUPPER, kunder: KUNDER, helsebygget: HELSEBYGGET, sov: null, kast: null, store_groups: null, nullstill: true });
+await klargjor({ moduler: ['b2b'], tellix: '1', grupper: GRUPPER, kunder: KUNDER, helsebygget: HELSEBYGGET, sov: null, kast: null, api_feil: null, side: null, store_groups: null, liste_slett: true, nullstill: true });
 // NAV-ansatt som amendo-core aldri oppdaterte: står med 0 og en gammel kunde-ID.
 await bruker('bedrift@example.com', { billing_phone: '411 28 080', _tellixGroupId: '0', _tellixCustomerId: 'GAMMEL' });
 await bruker('nav@example.com', { billing_phone: '90000001' });
@@ -79,7 +81,8 @@ sjekk('nøyaktig de fire feltene', JSON.stringify(Object.keys(r.json || {}).sort
 let m = await brukermeta('bedrift@example.com');
 sjekk('_tellixGroupId, _tellixCustomerId og _tellixCustomerUuId oppdatert', m.meta._tellixGroupId === '14' && m.meta._tellixCustomerId === 'T1' && m.meta._tellixCustomerUuId === 'U1', m.meta);
 let s = await tilstand();
-sjekk('telefonen sendt renset (+47XXXXXXXX) sammen med e-posten', JSON.stringify(s.args.at(-1)) === '["bedrift@example.com","+4741128080"]', s.args);
+sjekk('amendo-core sin search_customers (8-timers transient) brukes ikke', s.kall === 0, s.kall);
+sjekk('egen kopi av kundelista hentet fra Tellix (customer/list)', s.api_kall >= 2 && s.liste?.antall === 5, s);
 
 r = await kunde('nav@example.com');
 sjekk('Helsebygget-gruppe: ingen rabatt i nettbutikken', r.json?.gruppe_id === 4 && r.json?.nettbutikk === null, r.json);
@@ -93,7 +96,7 @@ sjekk('… og gruppen skrevet til brukeren', m.meta._tellixGroupId === '14' && m
 r = await kunde('ukjent@example.com');
 m = await brukermeta('ukjent@example.com');
 sjekk('ikke i Tellix: den lagrede gruppen brukes', r.json?.gruppe_id === 14, r.json);
-sjekk('… og feltene tømmes ikke', m.meta._tellixGroupId === '14' && m.meta._tellixCustomerId === 'T9', m.meta);
+sjekk('… og feltene tømmes ikke (koblet til T9, som Tellix ikke har)', m.meta._tellixGroupId === '14' && m.meta._tellixCustomerId === 'T9', m.meta);
 
 r = await kunde('faktura@example.com');
 sjekk('inaktiv gruppe i Tellix: ingen rabatt, ingen navn', r.json?.gruppe_id === 3 && r.json?.gruppe_navn === null && r.json?.nettbutikk === null && r.json?.helsebygget === null, r.json);
@@ -104,11 +107,11 @@ sjekk('get_tellix_customer_groups kalt én gang for alle oppslagene over (transi
 r = await rute('rabatt/kunde/999999');
 sjekk('ukjent WordPress-bruker: 200 med null', r.status === 200 && r.json?.gruppe_id === null && r.json?.nettbutikk === null, r.json);
 
-await klargjor({ kast: '1' });
+await klargjor({ liste_slett: true, api_feil: '1' });
 r = await kunde('bedrift@example.com');
 m = await brukermeta('bedrift@example.com');
-sjekk('Tellix kaster: 200 med lagret gruppe, feltene urørt', r.status === 200 && r.json?.gruppe_id === 14 && m.meta._tellixCustomerId === 'T1', [r.status, r.json, m.meta]);
-await klargjor({ kast: null });
+sjekk('Tellix svarer feil og ingen kopi: 200 med lagret gruppe, feltene urørt', r.status === 200 && r.json?.gruppe_id === 14 && m.meta._tellixCustomerId === 'T1', [r.status, r.json, m.meta]);
+await klargjor({ api_feil: null, liste_slett: true });
 
 // ── rabatt/telefon ──────────────────────────────────────────────────────────
 console.log('\nrabatt/telefon');
@@ -116,13 +119,25 @@ r = await telefon('411 28 080');
 sjekk('200 med renset nummer', r.status === 200 && r.json?.telefon === '+4741128080', r.json);
 sjekk('gruppen fra Tellix', r.json?.gruppe_id === 14 && r.json?.nettbutikk?.prosent === 10, r.json);
 s = await tilstand();
-sjekk('slått opp i Tellix på nummeret alene (ikke via WordPress-brukere)', JSON.stringify(s.args.at(-1)) === '["","+4741128080"]', s.args.at(-1));
+sjekk('slått opp i Tellix-lista, ikke via search_customers', s.kall === 0, s.kall);
 r = await telefon('+47 900 00 001');
 sjekk('Helsebygget-gruppe på telefon: helsebygget-satsen, ingen nettbutikk', r.json?.gruppe_id === 4 && r.json?.helsebygget?.prosent === 40 && r.json?.nettbutikk === null, r.json);
 r = await telefon('0047 99999999');
 sjekk('ukjent nummer: gruppe null', r.status === 200 && r.json?.gruppe_id === null && r.json?.telefon === '+4799999999', r.json);
 r = await telefon('abc');
 sjekk('ugyldig nummer: 400', r.status === 400, r.status);
+
+console.log('\nrabatt/telefon: navn og e-post fra Tellix (1.4.16)');
+r = await telefon('41128080');
+sjekk('navnet delt på siste mellomrom: «Kari Nordmann» + «Hansen»', r.json?.fornavn === 'Kari Nordmann' && r.json?.etternavn === 'Hansen', r.json);
+sjekk('e-posten fra Tellix (små bokstaver)', r.json?.epost === 'bedrift@example.com', r.json?.epost);
+sjekk('de gamle feltene er som før', ['gruppe_id', 'gruppe_navn', 'nettbutikk', 'helsebygget', 'telefon'].every(k => k in r.json), Object.keys(r.json || {}));
+r = await telefon('90000001');
+sjekk('ett ord: bare fornavn, etternavn null', r.json?.fornavn === 'Ola' && r.json?.etternavn === null, r.json);
+r = await telefon('90000005');
+sjekk('e-post @dummy.com (amendo-core sin plassholder): null', r.json?.epost === null && r.json?.fornavn === 'Per', r.json);
+r = await telefon('99999999');
+sjekk('ukjent nummer: navn og e-post null', r.json?.fornavn === null && r.json?.etternavn === null && r.json?.epost === null, r.json);
 
 console.log('\nReserve når Tellix ikke finner kunden (1.4.15)');
 await bruker('manuell@example.com', { _tellixGroupId: '1' });
@@ -134,6 +149,9 @@ r = await kunde('nullgruppe@example.com');
 m = await brukermeta('nullgruppe@example.com');
 sjekk('i Tellix uten gruppe: den lagrede gruppen (14) brukes', r.json?.gruppe_id === 14 && r.json?.nettbutikk?.prosent === 10, r.json);
 sjekk('… og 14 overskrives ikke med 0 (kunde-ID-en oppdateres)', m.meta._tellixGroupId === '14' && m.meta._tellixCustomerId === 'T6', m.meta);
+r = await kunde('nullgruppe@example.com');
+m = await brukermeta('nullgruppe@example.com');
+sjekk('neste gang er kunden KOBLET (T6): Tellix er sannheten, gruppe 0 skrives', r.json?.gruppe_id === null && m.meta._tellixGroupId === '0', [r.json, m.meta]);
 r = await kunde('ingen@example.com');
 sjekk('_tellixGroupId = 0 og ikke i Tellix: null', r.status === 200 && r.json?.gruppe_id === null && r.json?.nettbutikk === null, r.json);
 
@@ -153,11 +171,16 @@ await bruker('tlf-f@example.com', { billing_phone: '+47 460 00 002', _tellixGrou
 r = await telefon('46000002');
 sjekk('to brukere med samme gruppe: den gruppen', r.json?.gruppe_id === 14, r.json);
 await bruker('tlf-g@example.com', { billing_phone: '46000103', _tellixGroupId: '4' });
+await bruker('tlf-i@example.com', { billing_phone: '93000007', _tellixGroupId: '0' });
 r = await telefon('46000003');
 sjekk('nummer som bare ligner (samme to siste sifre): ikke treff', r.json?.gruppe_id === null, r.json);
 await bruker('tlf-h@example.com', { billing_phone: '41128080', _tellixGroupId: '4' });
 r = await telefon('41128080');
 sjekk('Tellix kjenner nummeret med gruppe: Tellix vinner over WordPress', r.json?.gruppe_id === 14, r.json);
+r = await telefon('93000007');
+sjekk('inaktiv Tellix-kunde finnes ikke (som i amendo-core)', r.json?.gruppe_id === null && r.json?.fornavn === null, r.json);
+r = await telefon('93000008');
+sjekk('slettet Tellix-kunde finnes ikke', r.json?.gruppe_id === null, r.json);
 
 console.log('\nGrense per nummer (10 per 15 min)');
 await klargjor({ nullstill: true });
@@ -169,23 +192,55 @@ sjekk('429 har Retry-After og JSON', r.status === 429 && Number(r.h.get('retry-a
 r = await telefon('90000001');
 sjekk('et annet nummer har egen kvote', r.status === 200, r.status);
 
-// ── Treg Tellix ─────────────────────────────────────────────────────────────
-console.log('\nTreg Tellix (> 2 s): mellomlagring i 10 min');
-await klargjor({ nullstill: true, sov: '2.3' });
+// ── Egen kopi av kundelista (1.4.16) ────────────────────────────────────────
+console.log('\nEgen kopi av kundelista: alle sider, aldri eldre enn 5 min');
+await klargjor({ liste_slett: true, side: '2', nullstill: true });
 r = await telefon('90000005');
 s = await tilstand();
-sjekk('første kall går til Tellix og markerer treg', r.json?.gruppe_id === 14 && s.kall === 1 && s.treg, s);
-await klargjor({ sov: null });
-r = await telefon('90000005');
+sjekk('alle sider hentet, 2 og 2, til tom side (7 kunder: offset 0, 2, 4, 6, 7)', JSON.stringify(s.offsets) === '[0,2,4,6,7]' && s.api_kall === 5, s.offsets);
+sjekk('bare aktive, ikke slettede kunder i kopien (5 av 7)', s.liste?.antall === 5, s.liste);
+sjekk('kunden er funnet i kopien', r.json?.gruppe_id === 14, r.json);
+r = await telefon('90000001');
 s = await tilstand();
-sjekk('samme oppslag igjen: fra mellomlageret, ikke Tellix', r.json?.gruppe_id === 14 && s.kall === 1, s);
-await klargjor({ nullstill: true });
-r = await telefon('90000005');
+sjekk('neste oppslag: fra kopien, ikke Tellix', r.json?.gruppe_id === 4 && s.api_kall === 5, s.api_kall);
+// Playground bruker 10–25 s per kall: kopien settes «fersk» med margin.
+await klargjor({ liste_alder: -60 });
+r = await telefon('98000000');
 s = await tilstand();
-sjekk('rask Tellix: ingen mellomlagring', r.json?.gruppe_id === 14 && s.kall === 1 && !s.treg, s);
-r = await telefon('90000005');
+sjekk('ukjent nummer, kopien yngre enn 30 s: ingen ny henting', r.json?.gruppe_id === null && s.api_kall === 5, s.api_kall);
+
+console.log('\nNy kunde i Tellix: funnet med en gang');
+await klargjor({ kunder: [...KUNDER, { id: 'T9', uuid: 'U9', groupId: 1, email: 'ny@example.com', phone: '+4798000001', name: 'Ny Kunde' }], liste_alder: 40, las_alder: 40 });
+let før = (await tilstand()).api_kall;
+r = await telefon('98000001');
 s = await tilstand();
-sjekk('… og neste kall går til Tellix igjen', s.kall === 2, s);
+sjekk('ikke i kopien, kopien eldre enn 30 s: hentet på nytt og funnet', r.json?.gruppe_id === 1 && r.json?.fornavn === 'Ny' && s.api_kall > før, [r.json, s.api_kall, før]);
+
+console.log('\nKunden flyttet i Tellix');
+const flyttet = [...KUNDER, { id: 'T9', uuid: 'U9', groupId: 4, email: 'ny@example.com', phone: '+4798000001', name: 'Ny Kunde' }];
+await klargjor({ kunder: flyttet, liste_alder: 100, las_alder: 100 });
+r = await telefon('98000001');
+sjekk('kopien er 100 s (under 5 min): gammel gruppe til den er hentet på nytt', r.json?.gruppe_id === 1, r.json);
+await klargjor({ liste_alder: 301, las_alder: 301 });
+r = await telefon('98000001');
+s = await tilstand();
+sjekk('kopien eldre enn 5 min: hentet på nytt, ny gruppe (4)', r.json?.gruppe_id === 4 && r.json?.helsebygget?.prosent === 40 && s.liste?.alder < 60, [r.json, s.liste]);
+
+console.log('\nMaks én full henting per 30 s for hele butikken');
+// Låsen satt fram i tid: den er garantert tatt mens kallet går.
+await klargjor({ liste_alder: 400, las_alder: -60 });
+før = (await tilstand()).api_kall;
+r = await telefon('98000001');
+s = await tilstand();
+sjekk('låsen tatt (under 30 s): ingen henting, svar fra den gamle kopien', s.api_kall === før && r.json?.gruppe_id === 4, [s.api_kall, før, r.json]);
+
+console.log('\nTellix feiler midt i lista');
+await klargjor({ kunder: [...flyttet, { id: 'T10', uuid: 'U10', groupId: 14, email: 'x@example.com', phone: '+4798000002', name: 'X' }], liste_alder: 400, las_alder: 400, api_feil: '2' });
+const antallFør = (await tilstand()).liste?.antall;
+r = await telefon('98000001');
+s = await tilstand();
+sjekk('feil på side 2: den forrige kopien står hel', s.liste?.antall === antallFør && r.json?.gruppe_id === 4, [s.liste, antallFør]);
+await klargjor({ api_feil: null, kunder: KUNDER, side: null, liste_slett: true });
 
 // ── Helsebygget-gruppene ────────────────────────────────────────────────────
 console.log('\nHelsebygget-gruppene');
@@ -264,7 +319,10 @@ sjekk('Helsebygget-gruppene merket', html.includes('Bare Helsebygget (40 %)') &&
 sjekk('skrivebeskyttet: ingen felter', !/<input|<select|<textarea/.test(html));
 
 console.log('\nAdvarsel: Tellix-lista kan være avkortet (1.4.15)');
-await klargjor({ sync_size: '2500', tellix_cache: 2500 });
+await klargjor({ sync_size: '2500', core_cache: 2500, tellix_cache: null });
+html = await side('admin');
+sjekk('transienten tellix_345customers (amendo-core 3.0.1 på garcon.no) leses', html.includes('amendo-tellix-avkortet') && html.includes('2500 kunder, og grensen er 2500'));
+await klargjor({ core_cache: null, tellix_cache: 2500 });
 html = await side('admin');
 sjekk('2500 kunder, grense 2500 (garcon.no): advarsel med tallene', html.includes('amendo-tellix-avkortet') && html.includes('hev AMENDO_CUSTOMER_SYNC_SIZE') && html.includes('2500 kunder, og grensen er 2500'));
 await klargjor({ tellix_cache: 2400 });
@@ -303,8 +361,8 @@ sjekk('rabatt/telefon finnes ikke (404)', r.status === 404, r.status);
 // ── Logg ────────────────────────────────────────────────────────────────────
 console.log('\nLogg');
 const logg = await get('/amendo-test/v1/v1414-logg');
-sjekk('amendo-tellix-loggen har ingen e-post eller telefonnummer', !/@|\+47|4112|9000/.test(logg.tekst || ''), logg.tekst);
-sjekk('… men har tidsmålingen', /search_customers tok \d/.test(logg.tekst || ''), logg.tekst);
+sjekk('amendo-tellix-loggen har ingen e-post, telefonnummer eller navn', !/@|\+47|4112|9000|Nordmann|Persen/.test(logg.tekst || ''), logg.tekst);
+sjekk('… men har antall og tid for hentingen', /kundelista hentet: \d+ kunder, \d+ sider, [\d.]+ s/.test(logg.tekst || ''), logg.tekst);
 
 await klargjor({ moduler: null, tellix: null, nullstill: true });
 ferdig();

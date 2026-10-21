@@ -7,9 +7,10 @@
  * Klassen er \Amendo\Customers, og metodene er public static:
  *     get_tellix_discounts()           [customerGroupId => stdClass {discountPercent,
  *                                       categories: [term_id => prosent]}], bare aktive
- *     search_customers($epost, $tlf)   [id, groupId, uuid, name, email, phone] eller null
- *                                      (telefon som +47XXXXXXXX)
- *     get_tellix_customer_groups()     gruppenavnene
+ *     get_tellix_customer_groups()     gruppenavnene (se under)
+ * Og \Amendo\TellixAPI::call_API('v2/customer/list', …) for kundelista — se
+ * «Oppslag» under. ⚠ IKKE search_customers(): den leter i en 8-timers kopi
+ * av én side (1.4.16).
  *
  * ⚠⚠ get_tellix_customer_groups() LOGGER HELE TELLIX-SVARET til error_log.
  * Den kalles derfor bare når transienten med navnene er tom (høyst hver 12.
@@ -51,18 +52,17 @@
 if (!defined('ABSPATH')) exit;
 
 const AMENDO_TELLIX_KLASSE          = 'Amendo\Customers';
-const AMENDO_TELLIX_TREG_SEKUNDER   = 2.0;
-const AMENDO_TELLIX_MELLOMLAGRE     = 10 * MINUTE_IN_SECONDS;
 const AMENDO_TELLIX_NAVN_LAGRES     = 12 * HOUR_IN_SECONDS;
 const AMENDO_TELLIX_TLF_GRENSE      = 10;
 const AMENDO_TELLIX_TLF_VINDU       = 15 * MINUTE_IN_SECONDS;
 
 // ── Adapter mot amendo-core ─────────────────────────────────────────────────
 
+/** Rabattene (Customers) og kundelista (TellixAPI) må begge finnes i amendo-core. */
 function amendo_tellix_tilgjengelig() {
     return class_exists(AMENDO_TELLIX_KLASSE)
         && method_exists(AMENDO_TELLIX_KLASSE, 'get_tellix_discounts')
-        && method_exists(AMENDO_TELLIX_KLASSE, 'search_customers');
+        && amendo_tellix_api_tilgjengelig();
 }
 
 /** Felt fra stdClass eller array, eller null. */
@@ -137,23 +137,39 @@ function amendo_tellix_grupper() {
     return $svar;
 }
 
-/** Tellix-kunden fra search_customers, normalisert — eller null. */
-function amendo_tellix_kunde_fra($raa) {
-    if (is_object($raa)) $raa = get_object_vars($raa);
-    if (!is_array($raa)) return null;
-    $id = $raa['id'] ?? null;
-    if ($id === null || $id === '') return null;
-    $gruppe = $raa['groupId'] ?? null;
-    return [
-        'id'        => (string) $id,
-        'uuid'      => (string) ($raa['uuid'] ?? ''),
-        'gruppe_id' => is_numeric($gruppe) ? (int) $gruppe : 0,
-    ];
+// ── Oppslag: vår egen kopi av kundelista (1.4.16) ───────────────────────────
+//
+// ⚠⚠ IKKE amendo-core sin search_customers(). Den leter i
+// get_tellix_customers(), som henter ÉN side (limit =
+// AMENDO_CUSTOMER_SYNC_SIZE) og mellomlagrer den i 8 timer. En kunde som
+// registreres eller flyttes i Tellix, får da feil rabatt i opptil 8 timer, og
+// kunder etter grensen finnes aldri.
+//
+// Tellix-API-et har ikke noe oppslag på telefon eller e-post: amendo-core
+// bruker bare v2/customer/list (offset/limit) og v3/customer/view (på
+// customerId), og ingenting vi har tilgang til viser at customer/list
+// filtrerer. Derfor holder vi en egen kopi av HELE lista (alle sider, offset/
+// limit til tom side), hentet med \Amendo\TellixAPI::call_API():
+//   - aldri eldre enn 5 minutter;
+//   - finnes ikke kunden, hentes den på nytt med en gang hvis kopien er eldre
+//     enn 30 sekunder (en kunde som nettopp er registrert, kan handle med
+//     riktig rabatt med én gang);
+//   - maks én full henting per 30 sekunder for hele butikken (atomisk lås i
+//     databasen), uansett hvor mange som logger inn samtidig.
+// Feiler en side, beholdes den forrige kopien hel — aldri en halv liste.
+//
+// Kopien ligger i optionen amendo_tellix_kundeliste (ikke autoload), med bare
+// feltene vi trenger. Den logges aldri; loggen får bare antall og tid.
+
+const AMENDO_TELLIX_LISTE_MAKS_ALDER = 5 * MINUTE_IN_SECONDS;
+const AMENDO_TELLIX_LISTE_PAUSE      = 30;
+const AMENDO_TELLIX_SIDE             = 1000;
+
+function amendo_tellix_api_tilgjengelig() {
+    return class_exists('Amendo\\TellixAPI') && method_exists('Amendo\\TellixAPI', 'call_API');
 }
 
-// ── Oppslag ─────────────────────────────────────────────────────────────────
-
-/** +47XXXXXXXX, eller '' når det ikke er et norsk mobil-/fastnummer. */
+/** +47XXXXXXXX, eller '' når det ikke er et norsk mobil-/fastnummer. Til nummer kunden skriver inn. */
 function amendo_tellix_telefon($nr) {
     $siffer = preg_replace('/\D/', '', (string) $nr);
     if (strlen($siffer) === 12 && strpos($siffer, '0047') === 0) $siffer = substr($siffer, 4);
@@ -161,71 +177,178 @@ function amendo_tellix_telefon($nr) {
     return strlen($siffer) === 8 ? '+47' . $siffer : '';
 }
 
+/** Telefonnummer fra Tellix renset som amendo-core gjør det: siste åtte sifre. */
+function amendo_tellix_telefon_fra_tellix($nr) {
+    $siffer = ltrim(preg_replace('/\D/', '', (string) $nr), '0');
+    return strlen($siffer) >= 8 ? '+47' . substr($siffer, -8) : '';
+}
+
 function amendo_tellix_logg($melding) {
     if (function_exists('wc_get_logger')) wc_get_logger()->info($melding, ['source' => 'amendo-tellix']);
 }
 
+/** Kopien: ['hentet' => tid, 'kunder' => [...]], eller null. */
+function amendo_tellix_liste_les() {
+    $data = get_option('amendo_tellix_kundeliste', null);
+    return is_array($data) && isset($data['hentet'], $data['kunder']) && is_array($data['kunder']) ? $data : null;
+}
+
 /**
- * search_customers med tidtaking. Tar kallet over 2 s, mellomlagres SVARENE i
- * 10 minutter (nøklet på hash av e-post og telefon) så lenge Tellix er treg.
- * Kaster ikke; null betyr «ikke funnet eller feil».
+ * Tar låsen for en full henting: true bare for ÉN forespørsel per 30
+ * sekunder for hele butikken. Atomisk i databasen, så to samtidige
+ * innlogginger ikke henter lista hver sin gang.
  */
-function amendo_tellix_sok($epost, $telefon) {
-    if (!amendo_tellix_tilgjengelig()) return null;
-    $nokkel = 'amendo_tellix_sok_' . md5(strtolower(trim((string) $epost)) . '|' . $telefon);
-    if (get_transient('amendo_tellix_treg')) {
-        $lagret = get_transient($nokkel);
-        if (is_array($lagret)) return $lagret['kunde'];
+function amendo_tellix_liste_las() {
+    global $wpdb;
+    add_option('amendo_tellix_liste_las', '0', '', false);
+    $naa = time();
+    $tatt = $wpdb->query($wpdb->prepare(
+        "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = 'amendo_tellix_liste_las' AND option_value <= %s",
+        (string) $naa, (string) ($naa - AMENDO_TELLIX_LISTE_PAUSE)
+    ));
+    wp_cache_delete('amendo_tellix_liste_las', 'options');
+    return $tatt === 1;
+}
+
+/**
+ * Henter hele lista fra Tellix og lagrer kopien. Returnerer true når den ble
+ * hentet. Gjør ingenting (false) når låsen er tatt, eller når Tellix svarer
+ * feil på en side — da står den forrige kopien.
+ */
+function amendo_tellix_liste_hent() {
+    if (!amendo_tellix_api_tilgjengelig() || !amendo_tellix_liste_las()) return false;
+    $start  = microtime(true);
+    $side   = max(1, (int) apply_filters('amendo_tellix_side', AMENDO_TELLIX_SIDE));
+    $kunder = [];
+    $offset = 0;
+    for ($i = 0; $i < 1000; $i++) {
+        try {
+            $r = call_user_func(['Amendo\\TellixAPI', 'call_API'], 'v2/customer/list', ['offset' => $offset, 'limit' => $side], 'GET');
+        } catch (Throwable $e) {
+            amendo_tellix_logg('kundelista: Tellix feilet (' . get_class($e) . ') — beholder forrige kopi');
+            return false;
+        }
+        if (!is_object($r) || !isset($r->customers) || !is_array($r->customers)) {
+            amendo_tellix_logg('kundelista: uventet svar fra Tellix på side ' . ($i + 1) . ' — beholder forrige kopi');
+            return false;
+        }
+        if (!$r->customers) break;
+        foreach ($r->customers as $k) {
+            // Som amendo-core: bare aktive, ikke slettede.
+            if (empty($k->isActive) || !empty($k->isDeleted)) continue;
+            $kunder[] = [
+                'id'        => (string) ($k->customerId ?? ''),
+                'uuid'      => (string) ($k->customerUuid ?? ''),
+                'gruppe_id' => is_numeric($k->customerGroupId ?? null) ? (int) $k->customerGroupId : 0,
+                'navn'      => trim((string) ($k->name ?? '')),
+                'epost'     => strtolower(trim((string) ($k->email ?? ''))),
+                'telefon'   => amendo_tellix_telefon_fra_tellix($k->phoneNumber ?? ''),
+            ];
+        }
+        $offset += count($r->customers);
     }
-    $start = microtime(true);
-    try {
-        $raa = call_user_func([AMENDO_TELLIX_KLASSE, 'search_customers'], (string) $epost, (string) $telefon);
-    } catch (Throwable $e) {
-        amendo_tellix_logg('search_customers feilet (' . get_class($e) . ')');
-        return null;
+    update_option('amendo_tellix_kundeliste', ['hentet' => time(), 'kunder' => $kunder], false);
+    amendo_tellix_logg(sprintf('kundelista hentet: %d kunder, %d sider, %.1f s', count($kunder), $i, microtime(true) - $start));
+    return true;
+}
+
+/** Leter i kopien. Kobling (ID/UUID) foran telefon foran e-post. */
+function amendo_tellix_let(array $liste, array $s) {
+    $id    = (string) ($s['id'] ?? '');
+    $uuid  = (string) ($s['uuid'] ?? '');
+    $epost = strtolower(trim((string) ($s['epost'] ?? '')));
+    $tlf   = array_values(array_filter((array) ($s['telefoner'] ?? [])));
+    $koblet = ($id !== '' && $id !== '0') || ($uuid !== '' && $uuid !== '0');
+    if ($koblet) {
+        foreach ($liste as $k) {
+            if (($id !== '' && $id !== '0' && $k['id'] === $id) || ($uuid !== '' && $uuid !== '0' && $k['uuid'] === $uuid)) {
+                return ['kunde' => $k, 'via' => 'kobling'];
+            }
+        }
     }
-    $tid   = microtime(true) - $start;
-    $kunde = amendo_tellix_kunde_fra($raa);
-    if ($tid > AMENDO_TELLIX_TREG_SEKUNDER) {
-        if (!get_transient('amendo_tellix_treg')) amendo_tellix_logg(sprintf('search_customers tok %.1f s — mellomlagrer i 10 min', $tid));
-        set_transient('amendo_tellix_treg', 1, AMENDO_TELLIX_MELLOMLAGRE);
+    foreach ($tlf as $t) {
+        foreach ($liste as $k) if ($k['telefon'] !== '' && $k['telefon'] === $t) return ['kunde' => $k, 'via' => 'kontakt'];
     }
-    if (get_transient('amendo_tellix_treg')) set_transient($nokkel, ['kunde' => $kunde], AMENDO_TELLIX_MELLOMLAGRE);
-    return $kunde;
+    if ($epost !== '') {
+        foreach ($liste as $k) if ($k['epost'] !== '' && $k['epost'] === $epost) return ['kunde' => $k, 'via' => 'kontakt'];
+    }
+    return null;
+}
+
+/**
+ * Finn Tellix-kunden. $s: id, uuid, epost, telefoner (+47XXXXXXXX).
+ * Returnerer ['kunde' => [...], 'via' => 'kobling'|'kontakt'] eller null.
+ */
+function amendo_tellix_finn(array $s) {
+    if (!amendo_tellix_api_tilgjengelig()) return null;
+    $data = amendo_tellix_liste_les();
+    if (!$data || time() - (int) $data['hentet'] > AMENDO_TELLIX_LISTE_MAKS_ALDER) {
+        if (amendo_tellix_liste_hent()) $data = amendo_tellix_liste_les();
+    }
+    if (!$data) return null;
+    $treff = amendo_tellix_let($data['kunder'], $s);
+    if ($treff) return $treff;
+    // Ikke funnet: kanskje registrert akkurat nå. Hent på nytt hvis kopien er
+    // eldre enn 30 sekunder (og låsen tillater det).
+    if (time() - (int) $data['hentet'] > AMENDO_TELLIX_LISTE_PAUSE && amendo_tellix_liste_hent()) {
+        $data = amendo_tellix_liste_les();
+        return $data ? amendo_tellix_let($data['kunder'], $s) : null;
+    }
+    return null;
 }
 
 /**
  * Slå opp WordPress-brukeren i Tellix og skriv det Tellix vet tilbake.
  * Returnerer gruppe-ID-en som gjelder (0 = ingen gruppe).
  *
- * ⚠ Reserve (1.4.15): Tellix sin gruppe brukes bare når den er over 0. Finner
- * ikke Tellix kunden, eller har Tellix-kunden ingen gruppe, gjelder
- * `_tellixGroupId` på brukeren hvis den er over 0 — den kan være satt for
- * hånd i wp-admin. En gruppe over 0 overskrives aldri med 0. Målt på
- * garcon.no 20.10.2026: bruker 100 med `_tellixGroupId = 1` fikk null.
+ * ⚠⚠ Tellix er sannheten for en KOBLET kunde (1.4.16): har brukeren
+ * `_tellixCustomerId` eller `_tellixCustomerUuId`, og Tellix har den kunden,
+ * gjelder Tellix-gruppen — også når den er tom. Da settes 0.
+ * Er treffet bare på telefon eller e-post, skrives aldri en gruppe over 0 ned
+ * til 0: `_tellixGroupId` kan være satt for hånd. Kunde-ID og UUID skrives
+ * likevel, så kunden er koblet neste gang.
+ * Finnes ikke kunden i Tellix, gjelder `_tellixGroupId` på brukeren hvis den
+ * er over 0 (1.4.15).
  */
 function amendo_tellix_oppdater_bruker($bruker_id) {
     $u = get_userdata((int) $bruker_id);
     if (!$u) return null;
-    $telefoner = array_values(array_unique(array_filter([
-        amendo_tellix_telefon(get_user_meta($u->ID, 'billing_phone', true)),
-        amendo_tellix_telefon(get_user_meta($u->ID, '_amendo_otp_match', true)),
-    ])));
-    $kunde = null;
-    foreach ($telefoner ?: [''] as $tlf) {
-        $kunde = amendo_tellix_sok($u->user_email, $tlf);
-        if ($kunde) break;
-    }
-    if ($kunde) {
-        update_user_meta($u->ID, '_tellixCustomerId', $kunde['id']);
-        if ($kunde['uuid'] !== '') update_user_meta($u->ID, '_tellixCustomerUuId', $kunde['uuid']);
-        if ($kunde['gruppe_id'] > 0) {
-            update_user_meta($u->ID, '_tellixGroupId', (string) $kunde['gruppe_id']);
-            return $kunde['gruppe_id'];
+    $treff = amendo_tellix_finn([
+        'id'        => (string) get_user_meta($u->ID, '_tellixCustomerId', true),
+        'uuid'      => (string) get_user_meta($u->ID, '_tellixCustomerUuId', true),
+        'epost'     => $u->user_email,
+        'telefoner' => array_values(array_unique(array_filter([
+            amendo_tellix_telefon(get_user_meta($u->ID, 'billing_phone', true)),
+            amendo_tellix_telefon(get_user_meta($u->ID, '_amendo_otp_match', true)),
+        ]))),
+    ]);
+    if ($treff) {
+        $k = $treff['kunde'];
+        if ($k['id'] !== '') update_user_meta($u->ID, '_tellixCustomerId', $k['id']);
+        if ($k['uuid'] !== '') update_user_meta($u->ID, '_tellixCustomerUuId', $k['uuid']);
+        if ($treff['via'] === 'kobling' || $k['gruppe_id'] > 0) {
+            update_user_meta($u->ID, '_tellixGroupId', (string) $k['gruppe_id']);
+            return $k['gruppe_id'];
         }
     }
     $lagret = get_user_meta($u->ID, '_tellixGroupId', true);
     return is_numeric($lagret) && (int) $lagret > 0 ? (int) $lagret : 0;
+}
+
+/**
+ * Fornavn, etternavn og e-post fra Tellix-kunden, til rabatt/telefon.
+ * Navnet deles på siste mellomrom: siste ord er etternavnet. E-post som er
+ * tom eller slutter på @dummy.com (amendo-core sin plassholder) blir null.
+ */
+function amendo_tellix_kontakt(?array $k) {
+    $navn = $k ? preg_replace('/\s+/', ' ', trim($k['navn'])) : '';
+    $pos  = strrpos($navn, ' ');
+    $epost = $k ? $k['epost'] : '';
+    return [
+        'fornavn'   => $navn === '' ? null : ($pos === false ? $navn : substr($navn, 0, $pos)),
+        'etternavn' => $navn === '' || $pos === false ? null : substr($navn, $pos + 1),
+        'epost'     => ($epost === '' || preg_match('/@dummy\.com$/i', $epost)) ? null : $epost,
+    ];
 }
 
 /**
@@ -436,9 +559,18 @@ function amendo_tellix_rest_telefon(WP_REST_Request $req) {
     if ($h instanceof WP_REST_Response) return $h;
     // Tellix først. Finner ikke Tellix nummeret, eller har kunden ingen
     // gruppe: WordPress-brukerne med samme nummer (se amendo_tellix_gruppe_fra_wp).
-    $kunde = amendo_tellix_sok('', $tlf);
+    $treff = amendo_tellix_finn(['telefoner' => [$tlf]]);
+    $kunde = $treff ? $treff['kunde'] : null;
     $gruppe = $kunde && $kunde['gruppe_id'] > 0 ? $kunde['gruppe_id'] : amendo_tellix_gruppe_fra_wp($tlf);
-    return ['telefon' => $tlf] + amendo_tellix_svar($gruppe, $h);
+    // ⚠⚠ FORUTSETNING for fornavn, etternavn og epost (1.4.16): ruten kalles
+    // BARE fra frontendens server, etter at kunden har bekreftet nummeret med
+    // en SMS-kode (Helsebygget-innloggingen). Da er det kundens egne
+    // opplysninger. Ruten er bak X-Amendo-Secret og grensen per nummer, men
+    // den vet ikke selv om koden er bekreftet — kalles den fra et annet sted,
+    // er den et oppslag av navn og e-post på telefonnummer. Ikke gjør det.
+    // Verdiene kommer fra Tellix-kunden, aldri fra WordPress-brukeren; null
+    // når Tellix ikke har kunden.
+    return ['telefon' => $tlf] + amendo_tellix_svar($gruppe, $h) + amendo_tellix_kontakt($kunde);
 }
 
 // ── Admin: B2B → Kundegrupper ───────────────────────────────────────────────
@@ -451,7 +583,10 @@ function amendo_tellix_pst($pst) {
 /**
  * Er kundelista fra amendo-core trolig avkortet? amendo-core henter ÉN side
  * med v2/customer/list, med limit = AMENDO_CUSTOMER_SYNC_SIZE (500 uten
- * konstanten), og mellomlagrer den i transienten `tellix_customers3`.
+ * konstanten), og mellomlagrer den i en transient: `tellix_345customers` i
+ * amendo-core 3.0.1 på garcon.no, `tellix_customers3` i eldre utgaver. Begge
+ * leses. Rabattrutene her bruker vår egen, komplette kopi; advarselen gjelder
+ * amendo-core sin egen bruk av lista (set_current_user og prisene).
  * Kunder etter grensen finnes aldri (garcon.no: 2500 av 2922, 20.10.2026).
  *
  * ⚠ Lista telles ETTER at amendo-core har tatt ut inaktive og slettede
@@ -462,8 +597,12 @@ function amendo_tellix_pst($pst) {
  * @return array{antall:int, grense:int}|null  null når lista ikke er lastet
  */
 function amendo_tellix_listeinfo() {
-    $kunder = get_transient('tellix_customers3');
-    if (!is_array($kunder)) return null;
+    $kunder = null;
+    foreach (['tellix_345customers', 'tellix_customers3'] as $navn) {
+        $k = get_transient($navn);
+        if (is_array($k) && ($kunder === null || count($k) > count($kunder))) $kunder = $k;
+    }
+    if ($kunder === null) return null;
     $grense = (int) (defined('AMENDO_CUSTOMER_SYNC_SIZE') ? AMENDO_CUSTOMER_SYNC_SIZE : 500);
     return ['antall' => count($kunder), 'grense' => $grense];
 }
@@ -486,7 +625,7 @@ add_action('amendo_b2b_kort', function() {
             <p class="amendo-advarsel amendo-tellix-avkortet">⚠ Tellix-lista kan være avkortet: hev AMENDO_CUSTOMER_SYNC_SIZE. amendo-core har <?php echo (int) $info['antall']; ?> kunder, og grensen er <?php echo (int) $info['grense']; ?>. Kunder etter grensen blir aldri funnet i Tellix.</p>
         <?php endif; ?>
         <?php if (!$tilgjengelig): ?>
-            <p class="amendo-advarsel amendo-tellix-mangler">⚠ Fant ikke amendo-core (Customers med get_tellix_discounts og search_customers). Ingen kunder får rabatt fra Tellix før den er på plass.</p>
+            <p class="amendo-advarsel amendo-tellix-mangler">⚠ Fant ikke amendo-core (\Amendo\Customers::get_tellix_discounts og \Amendo\TellixAPI::call_API). Ingen kunder får rabatt fra Tellix før den er på plass.</p>
         <?php elseif (!$grupper): ?>
             <p class="field-help">Tellix har ingen aktive kundegrupper.</p>
         <?php else: ?>

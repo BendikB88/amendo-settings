@@ -21,6 +21,7 @@ add_action('rest_api_init', function() {
             'helsebygget' => 'amendo_helsebygget_grupper', 'store_groups' => 'amendo-store-groups',
             'avdelinger' => 'amendo_avdelinger', 'stengte' => 'amendo_stengte_perioder',
             'kundegrupper' => 'amendo_kundegruppe_config', 'sync_size' => 'amendo_test_sync_size',
+            'side' => 'amendo_test_tellix_side', 'api_feil' => 'amendo_test_tellix_api_feil',
         ];
         foreach ($map as $k => $opt) {
             if (!array_key_exists($k, $p)) continue;
@@ -38,16 +39,30 @@ add_action('rest_api_init', function() {
             update_option('woocommerce_custom_orders_table_enabled', 'yes');
         }
         // Kundelista amendo-core har mellomlagret: N kunder, eller null for ingen.
-        if (array_key_exists('tellix_cache', $p)) {
-            if ($p['tellix_cache'] === null) delete_transient('tellix_customers3');
-            else set_transient('tellix_customers3', array_fill(0, (int) $p['tellix_cache'], ['id' => 0]), HOUR_IN_SECONDS);
+        // tellix_cache = det gamle navnet, core_cache = det på garcon.no (3.0.1).
+        foreach (['tellix_cache' => 'tellix_customers3', 'core_cache' => 'tellix_345customers'] as $k => $transient) {
+            if (!array_key_exists($k, $p)) continue;
+            if ($p[$k] === null) delete_transient($transient);
+            else set_transient($transient, array_fill(0, (int) $p[$k], ['id' => 0]), HOUR_IN_SECONDS);
         }
+        // Vår egen kopi: slett den, eller gjør den / låsen N sekunder gammel.
+        if (!empty($p['liste_slett'])) {
+            delete_option('amendo_tellix_kundeliste');
+            delete_option('amendo_tellix_liste_las');
+        }
+        if (isset($p['liste_alder']) && is_array($l = get_option('amendo_tellix_kundeliste', null))) {
+            $l['hentet'] = time() - (int) $p['liste_alder'];
+            update_option('amendo_tellix_kundeliste', $l, false);
+        }
+        if (isset($p['las_alder'])) update_option('amendo_tellix_liste_las', (string) (time() - (int) $p['las_alder']), false);
         if (!empty($p['nullstill'])) {
             global $wpdb;
             $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '%amendo_tellix_%' OR option_name LIKE '%amendo_rabatt_tlf_%'");
             delete_option('amendo_test_tellix_kall');
             delete_option('amendo_test_tellix_args');
             delete_option('amendo_test_tellix_navnkall');
+            delete_option('amendo_test_tellix_api_kall');
+            delete_option('amendo_test_tellix_api_offsets');
             wp_cache_flush();
         }
         return ['ok' => true];
@@ -59,6 +74,9 @@ add_action('rest_api_init', function() {
             'args' => get_option('amendo_test_tellix_args', []),
             'treg' => (bool) get_transient('amendo_tellix_treg'),
             'navnkall' => (int) get_option('amendo_test_tellix_navnkall', 0),
+            'api_kall' => (int) get_option('amendo_test_tellix_api_kall', 0),
+            'offsets'  => get_option('amendo_test_tellix_api_offsets', []),
+            'liste'    => ($l = get_option('amendo_tellix_kundeliste', null)) ? ['antall' => count($l['kunder']), 'alder' => time() - (int) $l['hentet']] : null,
         ];
     });
 
