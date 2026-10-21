@@ -20,7 +20,7 @@ add_action('rest_api_init', function() {
             'kunder' => 'amendo_test_tellix_kunder', 'sov' => 'amendo_test_tellix_sov', 'kast' => 'amendo_test_tellix_kast',
             'helsebygget' => 'amendo_helsebygget_grupper', 'store_groups' => 'amendo-store-groups',
             'avdelinger' => 'amendo_avdelinger', 'stengte' => 'amendo_stengte_perioder',
-            'kundegrupper' => 'amendo_kundegruppe_config',
+            'kundegrupper' => 'amendo_kundegruppe_config', 'sync_size' => 'amendo_test_sync_size',
         ];
         foreach ($map as $k => $opt) {
             if (!array_key_exists($k, $p)) continue;
@@ -36,6 +36,11 @@ add_action('rest_api_init', function() {
             if (!$ds->check_orders_table_exists()) $ds->create_database_tables();
             update_option('woocommerce_custom_orders_table_data_sync_enabled', 'no');
             update_option('woocommerce_custom_orders_table_enabled', 'yes');
+        }
+        // Kundelista amendo-core har mellomlagret: N kunder, eller null for ingen.
+        if (array_key_exists('tellix_cache', $p)) {
+            if ($p['tellix_cache'] === null) delete_transient('tellix_customers3');
+            else set_transient('tellix_customers3', array_fill(0, (int) $p['tellix_cache'], ['id' => 0]), HOUR_IN_SECONDS);
         }
         if (!empty($p['nullstill'])) {
             global $wpdb;

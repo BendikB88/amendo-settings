@@ -12,6 +12,11 @@ namespace Amendo;
 
 if (!defined('ABSPATH')) exit;
 
+// Grensen amendo-core henter kundelista med (wp-config på garcon.no).
+if (get_option('amendo_test_sync_size') && !defined('AMENDO_CUSTOMER_SYNC_SIZE')) {
+    define('AMENDO_CUSTOMER_SYNC_SIZE', (int) get_option('amendo_test_sync_size'));
+}
+
 if (get_option('amendo_test_tellix') === '1' && !class_exists(__NAMESPACE__ . '\\Customers')) {
     class Customers {
         /** Testdata: [{id, name, discountPercent, categories, active?}] */
@@ -46,8 +51,9 @@ if (get_option('amendo_test_tellix') === '1' && !class_exists(__NAMESPACE__ . '\
             if ($sov > 0) usleep((int) ($sov * 1000000));
             if (get_option('amendo_test_tellix_kast') === '1') throw new \RuntimeException('Tellix nede');
             foreach (json_decode((string) get_option('amendo_test_tellix_kunder', '[]'), true) ?: [] as $k) {
-                $e = $email !== '' && strtolower($k['email'] ?? '') === strtolower($email);
-                $t = $phone !== '' && ($k['phone'] ?? '') === $phone;
+                // Som amendo-core: e-post likt (store/små bokstaver teller), telefon renset.
+                $e = !empty($email) && ($k['email'] ?? '') === $email;
+                $t = !empty($phone) && ($k['phone'] ?? '') === '+47' . substr(preg_replace('/\D/', '', (string) $phone), -8);
                 if ($e || $t) {
                     return ['id' => $k['id'], 'groupId' => $k['groupId'], 'uuid' => $k['uuid'], 'name' => $k['name'] ?? '', 'email' => $k['email'] ?? '', 'phone' => $k['phone'] ?? ''];
                 }

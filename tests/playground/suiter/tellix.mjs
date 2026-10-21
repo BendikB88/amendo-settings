@@ -35,12 +35,14 @@ const GRUPPER = [
   { id: 7, name: 'NAV SFJ', discountPercent: 40 },
   { id: 5, name: 'NAV Arbeidslivssenter', discountPercent: 40 },
   { id: 6, name: 'NAV Arbeidsrådgivning', discountPercent: 40 },
+  { id: 1, name: 'Bedriftsrabatt 10 %', discountPercent: 10 },
 ];
 const KUNDER = [
   { id: 'T1', uuid: 'U1', groupId: 14, email: 'bedrift@example.com', phone: '+4741128080' },
   { id: 'T2', uuid: 'U2', groupId: 4, email: 'nav@example.com', phone: '+4790000001' },
   { id: 'T5', uuid: 'U5', groupId: 14, email: 'annen@tellix.no', phone: '+4790000005' },
   { id: 'T3', uuid: 'U3', groupId: 3, email: 'faktura@example.com', phone: '' },
+  { id: 'T6', uuid: 'U6', groupId: null, email: 'nullgruppe@example.com', phone: '' },
 ];
 const HELSEBYGGET = { 4: 40, 5: 40, 6: 40, 7: 40, 19: 50 };
 
@@ -122,6 +124,41 @@ sjekk('ukjent nummer: gruppe null', r.status === 200 && r.json?.gruppe_id === nu
 r = await telefon('abc');
 sjekk('ugyldig nummer: 400', r.status === 400, r.status);
 
+console.log('\nReserve når Tellix ikke finner kunden (1.4.15)');
+await bruker('manuell@example.com', { _tellixGroupId: '1' });
+await bruker('nullgruppe@example.com', { _tellixGroupId: '14' });
+await bruker('ingen@example.com', { _tellixGroupId: '0' });
+r = await kunde('manuell@example.com');
+sjekk('ikke i Tellix, _tellixGroupId = 1 (satt for hånd): gruppe 1 med nettbutikk-satsen', r.json?.gruppe_id === 1 && r.json?.nettbutikk?.prosent === 10, r.json);
+r = await kunde('nullgruppe@example.com');
+m = await brukermeta('nullgruppe@example.com');
+sjekk('i Tellix uten gruppe: den lagrede gruppen (14) brukes', r.json?.gruppe_id === 14 && r.json?.nettbutikk?.prosent === 10, r.json);
+sjekk('… og 14 overskrives ikke med 0 (kunde-ID-en oppdateres)', m.meta._tellixGroupId === '14' && m.meta._tellixCustomerId === 'T6', m.meta);
+r = await kunde('ingen@example.com');
+sjekk('_tellixGroupId = 0 og ikke i Tellix: null', r.status === 200 && r.json?.gruppe_id === null && r.json?.nettbutikk === null, r.json);
+
+console.log('\nReserve når Tellix ikke kjenner nummeret (1.4.15)');
+// 41128080-saken fra garcon.no, med et nummer Tellix ikke har: én bruker med
+// gruppe 4, én uten gruppe — samme nummer i to former.
+await bruker('tlf-a@example.com', { billing_phone: '450 76 655', _tellixGroupId: '4' });
+await bruker('tlf-b@example.com', { _amendo_otp_match: '+4745076655' });
+r = await telefon('45076655');
+sjekk('to brukere, én med gruppe (4): gruppe 4 og Helsebygget-satsen', r.json?.gruppe_id === 4 && r.json?.helsebygget?.prosent === 40 && r.json?.nettbutikk === null, r.json);
+await bruker('tlf-c@example.com', { billing_phone: '46000001', _tellixGroupId: '4' });
+await bruker('tlf-d@example.com', { _amendo_otp_match: '46000001', _tellixGroupId: '14' });
+r = await telefon('46000001');
+sjekk('to brukere med ulike grupper: null', r.status === 200 && r.json?.gruppe_id === null, r.json);
+await bruker('tlf-e@example.com', { billing_phone: '46000002', _tellixGroupId: '14' });
+await bruker('tlf-f@example.com', { billing_phone: '+47 460 00 002', _tellixGroupId: '14' });
+r = await telefon('46000002');
+sjekk('to brukere med samme gruppe: den gruppen', r.json?.gruppe_id === 14, r.json);
+await bruker('tlf-g@example.com', { billing_phone: '46000103', _tellixGroupId: '4' });
+r = await telefon('46000003');
+sjekk('nummer som bare ligner (samme to siste sifre): ikke treff', r.json?.gruppe_id === null, r.json);
+await bruker('tlf-h@example.com', { billing_phone: '41128080', _tellixGroupId: '4' });
+r = await telefon('41128080');
+sjekk('Tellix kjenner nummeret med gruppe: Tellix vinner over WordPress', r.json?.gruppe_id === 14, r.json);
+
 console.log('\nGrense per nummer (10 per 15 min)');
 await klargjor({ nullstill: true });
 let koder = [];
@@ -160,14 +197,28 @@ sjekk('… også rabatt/telefon', r.status === 503, r.status);
 
 await klargjor({ store_groups: { 1: '0', 2: '0', 3: '0', 4: 'helsebygget', 5: 'helsebygget', 6: 'helsebygget', 7: 'helsebygget', 14: '0' } });
 r = await kunde('nav@example.com');
-sjekk('utledet av amendo-store-groups («helsebygget»): gruppe 4 får bare Helsebygget', r.status === 200 && r.json?.gruppe_id === 4 && r.json?.helsebygget?.prosent === 40 && r.json?.nettbutikk === null, [r.status, r.json]);
-r = await kunde('bedrift@example.com');
-sjekk('… og gruppe 14 («0») får nettbutikk-satsen', r.json?.gruppe_id === 14 && r.json?.nettbutikk?.prosent === 10 && r.json?.helsebygget === null, r.json);
+sjekk('amendo-store-groups alene setter ikke opp lista: fortsatt 503 (1.4.15)', r.status === 503, [r.status, r.json]);
 
 let html = await side('admin');
-sjekk('admin ser feltet, forhåndsutfylt fra amendo-store-groups', html.includes('name="helsebygget_grupper[verdi]"') && /name="helsebygget_grupper\[verdi\]" value="4:40, 5:40, 6:40, 7:40"/.test(html));
-let l = await lagre({ helsebygget_grupper: { finnes: '1', verdi: '4:40, 5:40, 6:40, 7:40, 19:50, x:9, 0:10, 8:150' } });
-sjekk('admin lagrer {gruppe_id: prosent}, renset og kappet til 100', JSON.stringify(JSON.parse(l.helsebygget)) === JSON.stringify({ 4: 40, 5: 40, 6: 40, 7: 40, 8: 100, 19: 50 }), l.helsebygget);
+sjekk('feltet forhåndsutfylt med BARE gruppe-ID-ene (4–7), uten sats', /name="helsebygget_grupper\[verdi\]" value="4:, 5:, 6:, 7:"/.test(html), html.match(/name="helsebygget_grupper\[verdi\]" value="[^"]*"/)?.[0]);
+let l = await lagre({ helsebygget_grupper: { finnes: '1', verdi: '4:, 5:, 6:, 7:' } });
+sjekk('lagring av forslaget uten satser: avvist, ingenting lagret', l.helsebygget === null, l.helsebygget);
+html = await side('admin');
+sjekk('… fanen sier hvorfor, og beholder det som ble skrevet', html.includes('amendo-helsebygget-avvist') && /value="4:, 5:, 6:, 7:"/.test(html));
+l = await lagre({ helsebygget_grupper: { finnes: '1', verdi: '4:40, 5:40, 6:, 7:40' } });
+sjekk('én gruppe uten sats: hele lagringen avvist', l.helsebygget === null, l.helsebygget);
+l = await lagre({ helsebygget_grupper: { finnes: '1', verdi: '4:40, 5:40, 6:40, 7:40, 19:50, 8:150' } });
+sjekk('alle med sats: lagret {gruppe_id: prosent}, kappet til 100', JSON.stringify(JSON.parse(l.helsebygget)) === JSON.stringify({ 4: 40, 5: 40, 6: 40, 7: 40, 8: 100, 19: 50 }), l.helsebygget);
+html = await side('admin');
+sjekk('lagret liste vises med satsene (et tidligere avslag er glemt)', /name="helsebygget_grupper\[verdi\]" value="4:40, 5:40, 6:40, 7:40, 8:100, 19:50"/.test(html) && !html.includes('amendo-helsebygget-avvist'));
+l = await lagre({ helsebygget_grupper: { finnes: '1', verdi: '4:40, x:9' } });
+sjekk('noe som ikke kan tolkes: avvist, lista uendret', JSON.parse(l.helsebygget)['19'] === 50, l.helsebygget);
+html = await side('admin');
+sjekk('… og avslaget vises én gang', html.includes('amendo-helsebygget-avvist') && html.includes('x:9'));
+await klargjor({ helsebygget: { 4: 0, 5: 0, 6: 0, 7: 0 } });
+html = await side('admin');
+sjekk('lista fra garcon.no ({"4":0,…}): advarsel om 0 %', html.includes('amendo-helsebygget-null') && html.includes('Gruppe 4, 5, 6, 7 har 0 %'));
+await klargjor({ helsebygget: { 4: 40, 5: 40, 6: 40, 7: 40, 8: 100, 19: 50 } });
 html = await side('shop_manager');
 sjekk('butikkadministrator ser ikke feltet', !html.includes('helsebygget_grupper[verdi]') && html.includes('id="b2b-tellix"'));
 l = await lagre({ helsebygget_grupper: { finnes: '1', verdi: '14:99' } }, 'shop_manager');
@@ -211,6 +262,23 @@ sjekk('kategorisatsen med kategorinavn', html.includes('Ringer: 15 %'));
 sjekk('inaktiv gruppe vises ikke', !html.includes('Faktura 25'));
 sjekk('Helsebygget-gruppene merket', html.includes('Bare Helsebygget (40 %)') && html.includes('Bare Helsebygget (50 %)'));
 sjekk('skrivebeskyttet: ingen felter', !/<input|<select|<textarea/.test(html));
+
+console.log('\nAdvarsel: Tellix-lista kan være avkortet (1.4.15)');
+await klargjor({ sync_size: '2500', tellix_cache: 2500 });
+html = await side('admin');
+sjekk('2500 kunder, grense 2500 (garcon.no): advarsel med tallene', html.includes('amendo-tellix-avkortet') && html.includes('hev AMENDO_CUSTOMER_SYNC_SIZE') && html.includes('2500 kunder, og grensen er 2500'));
+await klargjor({ tellix_cache: 2400 });
+html = await side('admin');
+sjekk('2400 av 2500 (inaktive tatt ut etter hentingen): fortsatt advarsel', html.includes('amendo-tellix-avkortet'));
+await klargjor({ sync_size: '10000', tellix_cache: 2922 });
+html = await side('admin');
+sjekk('grense hevet til 10000, 2922 kunder: ingen advarsel', !html.includes('amendo-tellix-avkortet'));
+await klargjor({ sync_size: null, tellix_cache: 500 });
+html = await side('admin');
+sjekk('uten konstanten: amendo-core sin standard (500) gjelder', html.includes('amendo-tellix-avkortet') && html.includes('grensen er 500'));
+await klargjor({ tellix_cache: null });
+html = await side('admin');
+sjekk('lista ikke lastet: ingen advarsel (og ingen kall til Tellix)', !html.includes('amendo-tellix-avkortet'));
 
 // ── Uten amendo-core ────────────────────────────────────────────────────────
 console.log('\nUten amendo-core');

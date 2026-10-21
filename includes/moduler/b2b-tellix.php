@@ -34,8 +34,8 @@
  *   egen sats, gjelder den, ellers gruppens (som get_product_discount i
  *   amendo-core). Vi sender begge; frontenden velger per vare.
  *
- * ⚠⚠ Er `amendo_helsebygget_grupper` ikke satt opp (og ikke kan utledes av
- * `amendo-store-groups`), svarer rabattrutene 503. Ellers ville NAV-gruppene
+ * ⚠⚠ Er `amendo_helsebygget_grupper` ikke LAGRET av en administrator, svarer
+ * rabattrutene 503 (amendo-store-groups foreslår bare gruppe-ID-ene, aldri satsen). Ellers ville NAV-gruppene
  * fått Tellix-satsen i hele nettbutikken den dagen B2B ble slått på.
  *
  * ── Hvorfor rabatt/kunde alltid spør Tellix ───────────────────────────────
@@ -195,8 +195,14 @@ function amendo_tellix_sok($epost, $telefon) {
 }
 
 /**
- * Slå opp WordPress-brukeren i Tellix og skriv gruppen tilbake. Returnerer
- * gruppe-ID-en (fra Tellix når den fant kunden, ellers den lagrede).
+ * Slå opp WordPress-brukeren i Tellix og skriv det Tellix vet tilbake.
+ * Returnerer gruppe-ID-en som gjelder (0 = ingen gruppe).
+ *
+ * ⚠ Reserve (1.4.15): Tellix sin gruppe brukes bare når den er over 0. Finner
+ * ikke Tellix kunden, eller har Tellix-kunden ingen gruppe, gjelder
+ * `_tellixGroupId` på brukeren hvis den er over 0 — den kan være satt for
+ * hånd i wp-admin. En gruppe over 0 overskrives aldri med 0. Målt på
+ * garcon.no 20.10.2026: bruker 100 med `_tellixGroupId = 1` fikk null.
  */
 function amendo_tellix_oppdater_bruker($bruker_id) {
     $u = get_userdata((int) $bruker_id);
@@ -211,36 +217,63 @@ function amendo_tellix_oppdater_bruker($bruker_id) {
         if ($kunde) break;
     }
     if ($kunde) {
-        update_user_meta($u->ID, '_tellixGroupId', (string) $kunde['gruppe_id']);
         update_user_meta($u->ID, '_tellixCustomerId', $kunde['id']);
         if ($kunde['uuid'] !== '') update_user_meta($u->ID, '_tellixCustomerUuId', $kunde['uuid']);
-        return $kunde['gruppe_id'];
+        if ($kunde['gruppe_id'] > 0) {
+            update_user_meta($u->ID, '_tellixGroupId', (string) $kunde['gruppe_id']);
+            return $kunde['gruppe_id'];
+        }
     }
-    // ⚠ Ikke funnet eller feil: behold det som står.
     $lagret = get_user_meta($u->ID, '_tellixGroupId', true);
-    return is_numeric($lagret) ? (int) $lagret : 0;
+    return is_numeric($lagret) && (int) $lagret > 0 ? (int) $lagret : 0;
+}
+
+/**
+ * Reserve for rabatt/telefon når Tellix ikke kjenner nummeret: WordPress-
+ * brukerne med samme nummer i `billing_phone` eller `_amendo_otp_match`. Har
+ * NØYAKTIG én gruppe over 0, brukes den; flere ulike grupper eller ingen gir 0.
+ * Samme nummer kan ha flere brukere (41128080: 3626 med gruppe 4 og 1732 uten
+ * gruppe → 4).
+ *
+ * ⚠ Numrene står i mange former («41128080», «+47 411 28 080»). Spørringen
+ * siler på de to siste sifrene, og sammenligningen gjøres etter rensing.
+ */
+function amendo_tellix_gruppe_fra_wp($telefon) {
+    global $wpdb;
+    $siffer = substr($telefon, -8);
+    if (strlen($siffer) !== 8) return 0;
+    $rader = $wpdb->get_results($wpdb->prepare(
+        "SELECT user_id, meta_value FROM {$wpdb->usermeta} WHERE meta_key IN ('billing_phone', '_amendo_otp_match') AND meta_value LIKE %s",
+        '%' . $wpdb->esc_like(substr($siffer, -2)) . '%'
+    ));
+    $grupper = [];
+    foreach ($rader ?: [] as $r) {
+        if (amendo_tellix_telefon($r->meta_value) !== $telefon) continue;
+        $g = get_user_meta((int) $r->user_id, '_tellixGroupId', true);
+        if (is_numeric($g) && (int) $g > 0) $grupper[(int) $g] = true;
+    }
+    return count($grupper) === 1 ? (int) array_key_first($grupper) : 0;
 }
 
 // ── Helsebygget-gruppene ────────────────────────────────────────────────────
 
 /**
- * {gruppe_id => prosent}, eller null når ingen har satt dem opp. Uten lagret
- * option forsøkes `amendo-store-groups` (grupper bundet til Helsebygget).
+ * {gruppe_id => prosent} slik en administrator har LAGRET den, eller null når
+ * den ikke er satt opp (da svarer rabattrutene 503).
+ *
+ * ⚠ Satsen fylles ALDRI inn automatisk (1.4.15). 1.4.14 tok den fra Tellix,
+ * som er 0 for NAV-gruppene, og garcon.no fikk {"4":0,"5":0,"6":0,"7":0}.
+ * amendo-store-groups brukes bare til å foreslå gruppe-ID-ene i feltet.
  */
 function amendo_helsebygget_grupper() {
-    $lagret = get_option('amendo_helsebygget_grupper', null);
-    if ($lagret !== null && $lagret !== false) {
-        $data = is_array($lagret) ? $lagret : json_decode((string) $lagret, true);
-        return amendo_helsebygget_rens(is_array($data) ? $data : []);
-    }
-    return amendo_helsebygget_fra_store_groups();
+    return amendo_helsebygget_lagret();
 }
 
 /**
- * Lista slik den er LAGRET av en administrator, eller null. Ikke utledet av
- * amendo-store-groups: bare en lagret liste gjør Helsebygget-kolonnene i
- * amendo_kundegruppe_config skrivebeskyttet (se b2b.php). Butikker som aldri
- * har lagret den, merker ingen endring.
+ * Lista slik den er LAGRET av en administrator, eller null. Bare en lagret
+ * liste gjør Helsebygget-kolonnene i amendo_kundegruppe_config
+ * skrivebeskyttet (se b2b.php). Butikker som aldri har lagret den, merker
+ * ingen endring.
  */
 function amendo_helsebygget_lagret() {
     $lagret = get_option('amendo_helsebygget_grupper', null);
@@ -261,24 +294,21 @@ function amendo_helsebygget_rens(array $data) {
 }
 
 /**
- * Utleder gruppene fra `amendo-store-groups` når den finnes. Formatet på
- * garcon.no er {gruppe_id: "helsebygget" | "0"}, f.eks.
- *     {"1":"0","4":"helsebygget","5":"helsebygget","6":"helsebygget","7":"helsebygget","14":"0"}
- * Grupper med verdien «helsebygget» er Helsebygget-grupper, med satsen fra
- * Tellix. ⚠ Gruppe 19 (Personalrabatt 50) er ikke bundet der, og må legges inn
- * for hånd i feltet. Finnes ingen, returneres null (= ikke satt opp).
+ * Gruppe-ID-ene som er bundet til Helsebygget i `amendo-store-groups`
+ * ({gruppe_id: "helsebygget" | "0"} på garcon.no), sortert. Bare ID-ene —
+ * aldri en sats. ⚠ Gruppe 19 (Personalrabatt 50) er ikke bundet der, og må
+ * legges inn for hånd.
  */
 function amendo_helsebygget_fra_store_groups() {
     $raa = get_option('amendo-store-groups', null);
     if (is_string($raa)) $raa = json_decode($raa, true);
-    if (!is_array($raa)) return null;
-    $tellix = amendo_tellix_grupper();
-    $ut = [];
+    if (!is_array($raa)) return [];
+    $ider = [];
     foreach ($raa as $id => $binding) {
-        if (!is_numeric($id) || (int) $id <= 0 || strtolower(trim((string) $binding)) !== 'helsebygget') continue;
-        if (isset($tellix[(int) $id])) $ut[(int) $id] = $tellix[(int) $id]['prosent'];
+        if (is_numeric($id) && (int) $id > 0 && strtolower(trim((string) $binding)) === 'helsebygget') $ider[] = (int) $id;
     }
-    return $ut ? amendo_helsebygget_rens($ut) : null;
+    sort($ider);
+    return $ider;
 }
 
 /** «4:40, 5:40, 19:50» ⇄ {4: 40, 5: 40, 19: 50}. */
@@ -288,19 +318,43 @@ function amendo_helsebygget_tekst(array $grupper) {
     return implode(', ', $deler);
 }
 
-function amendo_helsebygget_fra_tekst($tekst) {
+/**
+ * Tolker feltet. Returnerer ['grupper' => {id: prosent}, 'feil' => [...]]:
+ * en gruppe uten sats («4:» eller «4») og alt som ikke kan tolkes er feil.
+ */
+function amendo_helsebygget_tolk($tekst) {
     $ut = [];
+    $feil = [];
     foreach (preg_split('/[\s,;]+/', (string) $tekst, -1, PREG_SPLIT_NO_EMPTY) as $del) {
-        if (preg_match('/^(\d+)[:=](\d+(?:[.,]\d+)?)$/', $del, $m)) $ut[$m[1]] = str_replace(',', '.', $m[2]);
+        if (preg_match('/^(\d+)[:=](\d+(?:[.,]\d+)?)$/', $del, $m) && (int) $m[1] > 0) {
+            $ut[$m[1]] = str_replace(',', '.', $m[2]);
+        } else {
+            $feil[] = $del;
+        }
     }
-    return amendo_helsebygget_rens($ut);
+    return ['grupper' => amendo_helsebygget_rens($ut), 'feil' => $feil];
 }
 
-/** Bare administrator — se toppen av b2b.php for hvorfor den ikke er butikkens valg. */
+function amendo_helsebygget_fra_tekst($tekst) {
+    return amendo_helsebygget_tolk($tekst)['grupper'];
+}
+
+/**
+ * Bare administrator — se toppen av b2b.php for hvorfor den ikke er butikkens
+ * valg. ⚠ Avvises HELT når en gruppe mangler sats: lista blir stående som den
+ * var, og fanen viser hva som var feil.
+ */
 add_action('amendo_lagre_innstillinger', function(array $post) {
     $inn = $post['helsebygget_grupper'] ?? null;
     if (!is_array($inn) || empty($inn['finnes']) || !current_user_can('manage_options')) return;
-    update_option('amendo_helsebygget_grupper', wp_json_encode((object) amendo_helsebygget_fra_tekst($inn['verdi'] ?? '')), false);
+    $tolket = amendo_helsebygget_tolk($inn['verdi'] ?? '');
+    if ($tolket['feil']) {
+        set_transient('amendo_helsebygget_avvist_' . get_current_user_id(), ['verdi' => (string) ($inn['verdi'] ?? ''), 'feil' => $tolket['feil']], 10 * MINUTE_IN_SECONDS);
+        return;
+    }
+    // Et tidligere avslag gjelder ikke lenger.
+    delete_transient('amendo_helsebygget_avvist_' . get_current_user_id());
+    update_option('amendo_helsebygget_grupper', wp_json_encode((object) $tolket['grupper']), false);
 });
 
 // ── Svaret ──────────────────────────────────────────────────────────────────
@@ -380,8 +434,11 @@ function amendo_tellix_rest_telefon(WP_REST_Request $req) {
 
     $h = amendo_tellix_helsebygget_eller_feil();
     if ($h instanceof WP_REST_Response) return $h;
+    // Tellix først. Finner ikke Tellix nummeret, eller har kunden ingen
+    // gruppe: WordPress-brukerne med samme nummer (se amendo_tellix_gruppe_fra_wp).
     $kunde = amendo_tellix_sok('', $tlf);
-    return ['telefon' => $tlf] + amendo_tellix_svar($kunde ? $kunde['gruppe_id'] : 0, $h);
+    $gruppe = $kunde && $kunde['gruppe_id'] > 0 ? $kunde['gruppe_id'] : amendo_tellix_gruppe_fra_wp($tlf);
+    return ['telefon' => $tlf] + amendo_tellix_svar($gruppe, $h);
 }
 
 // ── Admin: B2B → Kundegrupper ───────────────────────────────────────────────
@@ -391,14 +448,43 @@ function amendo_tellix_pst($pst) {
     return rtrim(rtrim(number_format((float) $pst, 2, ',', ''), '0'), ',') . ' %';
 }
 
+/**
+ * Er kundelista fra amendo-core trolig avkortet? amendo-core henter ÉN side
+ * med v2/customer/list, med limit = AMENDO_CUSTOMER_SYNC_SIZE (500 uten
+ * konstanten), og mellomlagrer den i transienten `tellix_customers3`.
+ * Kunder etter grensen finnes aldri (garcon.no: 2500 av 2922, 20.10.2026).
+ *
+ * ⚠ Lista telles ETTER at amendo-core har tatt ut inaktive og slettede
+ * kunder, så en avkortet liste er sjelden nøyaktig lik grensen. Advarselen
+ * gis derfor når antallet er innenfor 5 % av grensen. Bare transienten leses
+ * — dette gjør aldri et kall til Tellix.
+ *
+ * @return array{antall:int, grense:int}|null  null når lista ikke er lastet
+ */
+function amendo_tellix_listeinfo() {
+    $kunder = get_transient('tellix_customers3');
+    if (!is_array($kunder)) return null;
+    $grense = (int) (defined('AMENDO_CUSTOMER_SYNC_SIZE') ? AMENDO_CUSTOMER_SYNC_SIZE : 500);
+    return ['antall' => count($kunder), 'grense' => $grense];
+}
+
+function amendo_tellix_liste_avkortet() {
+    $info = amendo_tellix_listeinfo();
+    return $info !== null && $info['grense'] > 0 && $info['antall'] >= (int) floor($info['grense'] * 0.95);
+}
+
 add_action('amendo_b2b_kort', function() {
     $tilgjengelig = amendo_tellix_tilgjengelig();
     $grupper = amendo_tellix_grupper();
     $h = amendo_helsebygget_grupper();
+    $info = $tilgjengelig ? amendo_tellix_listeinfo() : null;
     ?>
     <div class="amendo-card" id="b2b-tellix">
         <h2>Kundegrupper fra Tellix</h2>
         <p class="amendo-desc">Satsene settes i Tellix og vises her bare til informasjon. Gruppene under Helsebygget får rabatt bare på Helsebygget-siden, ikke i nettbutikken.</p>
+        <?php if ($tilgjengelig && amendo_tellix_liste_avkortet()): ?>
+            <p class="amendo-advarsel amendo-tellix-avkortet">⚠ Tellix-lista kan være avkortet: hev AMENDO_CUSTOMER_SYNC_SIZE. amendo-core har <?php echo (int) $info['antall']; ?> kunder, og grensen er <?php echo (int) $info['grense']; ?>. Kunder etter grensen blir aldri funnet i Tellix.</p>
+        <?php endif; ?>
         <?php if (!$tilgjengelig): ?>
             <p class="amendo-advarsel amendo-tellix-mangler">⚠ Fant ikke amendo-core (Customers med get_tellix_discounts og search_customers). Ingen kunder får rabatt fra Tellix før den er på plass.</p>
         <?php elseif (!$grupper): ?>
@@ -427,17 +513,36 @@ add_action('amendo_b2b_kort', function() {
         <?php endif; ?>
     </div>
 
-    <?php if (current_user_can('manage_options')): ?>
+    <?php if (current_user_can('manage_options')):
+        $avvist = get_transient('amendo_helsebygget_avvist_' . get_current_user_id());
+        if ($avvist) delete_transient('amendo_helsebygget_avvist_' . get_current_user_id());
+        // Verdien i feltet: det som ble avvist (så det kan rettes), ellers den
+        // lagrede lista, ellers bare ID-ene fra amendo-store-groups — uten sats.
+        if (is_array($avvist)) {
+            $verdi = (string) $avvist['verdi'];
+        } elseif ($h !== null) {
+            $verdi = amendo_helsebygget_tekst($h);
+        } else {
+            $verdi = implode(', ', array_map(function($id) { return $id . ':'; }, amendo_helsebygget_fra_store_groups()));
+        }
+        $nuller = $h ? array_keys(array_filter($h, function($p) { return (float) $p <= 0; })) : [];
+    ?>
     <div class="amendo-card" id="b2b-helsebygget">
         <h2>Helsebygget-grupper</h2>
-        <p class="amendo-desc">Fast oppsett, bare for administrator. Gruppe-ID og sats: <code>4:40, 5:40, 6:40, 7:40, 19:50</code>. Gruppene her får rabatt bare via /helsebygget.</p>
+        <p class="amendo-desc">Fast oppsett, bare for administrator. Gruppe-ID og sats: <code>4:40, 5:40, 6:40, 7:40, 19:50</code>. Gruppene her får rabatt bare via /helsebygget. Satsen fylles aldri inn automatisk.</p>
+        <?php if (is_array($avvist)): ?>
+            <p class="amendo-advarsel amendo-helsebygget-avvist">⚠ Ikke lagret: <?php echo esc_html(implode(', ', $avvist['feil'])); ?> mangler sats eller kan ikke tolkes. Skriv gruppe:prosent for hver gruppe. Lista er uendret.</p>
+        <?php endif; ?>
         <?php if ($h === null): ?>
-            <p class="amendo-advarsel">⚠ Ikke satt opp. Rabattrutene svarer 503 til feltet er lagret, så ingen gruppe får feil rabatt i mellomtiden.</p>
+            <p class="amendo-advarsel">⚠ Ikke satt opp. Rabattrutene svarer 503 til feltet er lagret, så ingen gruppe får feil rabatt i mellomtiden.<?php if (amendo_helsebygget_fra_store_groups()): ?> Gruppene som er bundet til Helsebygget i amendo-store-groups, er fylt inn — skriv satsen for hver av dem (og legg til grupper som ikke er bundet der, som 19).<?php endif; ?></p>
+        <?php endif; ?>
+        <?php if ($nuller): ?>
+            <p class="amendo-advarsel amendo-helsebygget-null">⚠ Gruppe <?php echo esc_html(implode(', ', $nuller)); ?> har 0 % — de får ingen rabatt på Helsebygget. Er det meningen?</p>
         <?php endif; ?>
         <input type="hidden" name="helsebygget_grupper[finnes]" value="1">
         <div class="amendo-field">
             <label for="helsebygget_grupper">Gruppe:prosent</label>
-            <input type="text" id="helsebygget_grupper" name="helsebygget_grupper[verdi]" value="<?php echo esc_attr(amendo_helsebygget_tekst($h ?? [])); ?>" placeholder="4:40, 5:40, 6:40, 7:40, 19:50">
+            <input type="text" id="helsebygget_grupper" name="helsebygget_grupper[verdi]" value="<?php echo esc_attr($verdi); ?>" placeholder="4:40, 5:40, 6:40, 7:40, 19:50">
         </div>
     </div>
     <?php endif;
