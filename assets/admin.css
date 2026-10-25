@@ -457,3 +457,10 @@
 /* Helsebygget-ansatte (1.4.17) */
 .amendo-ny-pin { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 12px 16px; margin: 12px 0; }
 .amendo-pin { font-family: monospace; font-size: 18px; letter-spacing: 3px; }
+
+/* Antallsregler (1.4.18) */
+.antall-regel-rad { border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+.antall-regel-linje { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 14px; }
+.antall-regel-linje input[type="number"] { width: 80px; }
+.antall-regel-unntak { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: normal; text-transform: none; letter-spacing: 0; }
+.amendo-lengste-tid { background: #f9fafb; border-left: 3px solid #b45309; padding: 8px 12px; }

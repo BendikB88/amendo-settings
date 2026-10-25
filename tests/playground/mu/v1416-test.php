@@ -50,6 +50,8 @@ add_action('rest_api_init', function() {
             'regler'       => $les('amendo_kategori_regler'),
             'avdelinger'   => $les('amendo_avdelinger'),
             'kundegrupper' => $les('amendo_kundegrupper'),
+            'antall_regler' => $les('amendo_antall_regler'),
+            'stengt_helligdager' => get_option('amendo_stengt_helligdager', null),
         ];
     });
 });

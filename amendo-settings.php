@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.17
+ * Version: 1.4.18
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.17');
+define('AMENDO_SETTINGS_VERSION', '1.4.18');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -25,6 +25,7 @@ require_once AMENDO_SETTINGS_PATH . 'includes/kortbetaling.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/stengte.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/lagring.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/kategorivelger.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/leveringsregler.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/helsebygget.php';
 // Sist: laster modulene som er på, og de kan bruke alt over.
 require_once AMENDO_SETTINGS_PATH . 'includes/moduler.php';
@@ -167,6 +168,16 @@ add_action('admin_post_amendo_save_settings', function() {
     // Stengte perioder, med avdeling — se includes/stengte.php.
     if (amendo_lagring_skal_lagre($_POST, 'stengte')) amendo_stengte_lagre($_POST);
 
+    // Helligdager og antallsregler — se includes/leveringsregler.php. Bare med
+    // markøren: et skjema uten feltene skal ikke slå av bryteren eller tømme
+    // reglene.
+    if (isset($_POST['stengt_helligdager_finnes'])) {
+        update_option('amendo_stengt_helligdager', isset($_POST['stengt_helligdager']) ? '1' : '0');
+    }
+    if (isset($_POST['antall_regler_finnes']) && amendo_lagring_skal_lagre($_POST, 'antallregler')) {
+        amendo_antall_regler_lagre($_POST);
+    }
+
     // Kategori-regler
     if (!amendo_lagring_skal_lagre($_POST, 'kategoriregler')) {
         // Urørt i nettleseren: står som den er.
@@ -211,6 +222,7 @@ add_action('admin_post_amendo_save_settings', function() {
                 'cutoff'           => sanitize_text_field($avd['cutoff'] ?? ''),
                 'tidsluke'         => !empty($avd['tidsluke']) ? intval($avd['tidsluke']) : null,
                 'maks_per_tidsluke'=> !empty($avd['maks_per_tidsluke']) ? intval($avd['maks_per_tidsluke']) : null,
+                'bestillingsvindu_dager' => amendo_bestillingsvindu($avd),
             ];
         }
         update_option('amendo_avdelinger', json_encode($avdelinger));
@@ -339,6 +351,8 @@ function amendo_get_leveringsregler() {
             'cutoff_resolved'           => !empty($avd['cutoff']) ? $avd['cutoff'] : $global_cutoff,
             'tidsluke_resolved'         => $avd['tidsluke'] ?? $global_tidsluke,
             'maks_per_tidsluke_resolved'=> $avd['maks_per_tidsluke'] ?? $global_maks,
+            // 1.4.18 — se includes/leveringsregler.php. Alltid med, standard 60.
+            'bestillingsvindu_dager'    => amendo_bestillingsvindu($avd),
         ]);
     }, $avdelinger_raw);
 
@@ -351,6 +365,10 @@ function amendo_get_leveringsregler() {
             'maks_per_tidsluke'  => $global_maks,
             'ikke_dager'         => $ikke_dager,
             'stengte_perioder'   => $stengte,
+            // 1.4.18 — se includes/leveringsregler.php.
+            'stengt_helligdager' => amendo_stengt_helligdager(),
+            'helligdager'        => amendo_helligdager_rest(),
+            'antall_regler'      => amendo_antall_regler_rest(),
         ],
         'levering' => [
             'aktiv'              => get_option('amendo_levering_aktiv', '0') === '1',
@@ -359,7 +377,10 @@ function amendo_get_leveringsregler() {
             'prosesseringstid'   => intval(get_option('amendo_levering_prosesseringstid', 2)),
             'har_wolt'           => !empty(get_option('amendo_wolt_api_key', '')),
         ],
-        'kategori_regler' => $kat_regler,
+        'kategori_regler' => array_map(function($r) {
+            // 1.4.18: navnet, til «Kaker trenger 3 virkedager». null når slettet.
+            return $r + ['kategori_navn' => amendo_leveringsregler_kategorinavn($r['kategori_id'] ?? 0)];
+        }, $kat_regler),
         'avdelinger'      => $avdelinger,
     ], 200);
 }
@@ -714,6 +735,11 @@ function amendo_settings_page() {
                                         </div>
                                     </div>
                                     <div class="amendo-field">
+                                        <label>Kan bestilles inntil</label>
+                                        <input type="number" name="avdelinger[<?php echo $i; ?>][bestillingsvindu_dager]" value="<?php echo esc_attr(amendo_bestillingsvindu($avd)); ?>" min="1" max="365" style="width:90px"> dager fram
+                                        <p class="field-help">Hvor langt fram kunden kan velge dato. Standard 60.</p>
+                                    </div>
+                                    <div class="amendo-field">
                                         <label>Tillat henting her</label>
                                         <label class="toggle">
                                             <input type="checkbox" name="avdelinger[<?php echo $i; ?>][henting_aktiv]" <?php checked($avd['henting_aktiv']??'1','1'); ?>>
@@ -784,6 +810,8 @@ function amendo_settings_page() {
                         </div>
                         <p class="field-help">Typisk lørdag og søndag</p>
                     </div>
+                    <input type="hidden" name="stengt_helligdager_finnes" value="1">
+                    <?php amendo_helligdager_felt(); ?>
                     <div class="amendo-field" data-amendo-del="stengte">
                         <?php amendo_lagring_felt('stengte'); ?>
                         <label>Stengte perioder</label>
@@ -871,6 +899,8 @@ function amendo_settings_page() {
                     <template id="kategori-regel-mal"><?php amendo_kategori_regel_rad('__i__', []); ?></template>
                     <button type="button" class="amendo-btn-secondary" id="legg-til-kategori-regel">+ Legg til regel</button>
                 </div>
+
+                <?php amendo_antall_regler_kort(); ?>
             </div>
 
             <?php do_action('amendo_admin_paneler'); ?>

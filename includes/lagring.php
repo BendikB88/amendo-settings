@@ -34,6 +34,7 @@ function amendo_lagring_deler() {
         'avdelinger'     => 'amendo_avdelinger',
         'stengte'        => 'amendo_stengte_perioder',
         'kategoriregler' => 'amendo_kategori_regler',
+        'antallregler'   => 'amendo_antall_regler',
     ]);
 }
 
@@ -77,7 +78,7 @@ function amendo_lagring_felt($del) {
 function amendo_lagring_navn($del) {
     $navn = apply_filters('amendo_lagring_navn', [
         'forside' => 'Forside', 'meny' => 'Meny', 'kategorirad' => 'Kategoriraden',
-        'avdelinger' => 'Avdelinger', 'stengte' => 'Stengte perioder', 'kategoriregler' => 'Kategori-overstyringer',
+        'avdelinger' => 'Avdelinger', 'stengte' => 'Stengte perioder', 'kategoriregler' => 'Kategori-overstyringer', 'antallregler' => 'Antallsregler',
     ]);
     return $navn[$del] ?? $del;
 }
