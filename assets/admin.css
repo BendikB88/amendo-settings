@@ -439,3 +439,21 @@
 .forside-seksjon-navn { flex: 1; }
 .forside-seksjon-skjul { display: flex; align-items: center; gap: 4px; font-size: 13px; }
 .forside-seksjon-rad .meny-drag { cursor: grab; }
+
+/* Underfaner i B2B (1.4.17) */
+.amendo-undernav { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid #e5e7eb; }
+.amendo-undertab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 14px; font-size: 13px; color: #6b7280; cursor: pointer; }
+.amendo-undertab.active { color: #111; border-bottom-color: #111; }
+.amendo-underpanel { display: none; }
+.amendo-underpanel.active { display: block; }
+
+/* Kundegrupper (1.4.17) */
+.kundegruppe-tabell th .kolonne-hjelp { display: block; font-weight: normal; font-size: 11px; line-height: 1.35; color: #6b7280; text-transform: none; letter-spacing: 0; margin-top: 2px; }
+.kundegruppe-rabatt { font-size: 13px; }
+
+/* Kategorivelgeren (1.4.17) */
+.amendo-kategori-sok { display: block; width: 100%; max-width: 100%; margin-bottom: 4px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
+
+/* Helsebygget-ansatte (1.4.17) */
+.amendo-ny-pin { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 12px 16px; margin: 12px 0; }
+.amendo-pin { font-family: monospace; font-size: 18px; letter-spacing: 3px; }

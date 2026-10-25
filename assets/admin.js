@@ -8,20 +8,36 @@ jQuery(function($) {
         $('#tab-' + $(this).data('tab')).addClass('active');
     });
 
+    // ── Underfaner (B2B: Bedrifter, Kundegrupper, Helsebygget) ──
+    // Alt står i hovedskjemaet og sendes som før; bare visningen byttes.
+    $(document).on('click', '.amendo-undertab', function() {
+        var $panel = $(this).closest('.amendo-panel'), under = $(this).data('under');
+        $panel.find('.amendo-undertab').removeClass('active');
+        $(this).addClass('active');
+        $panel.find('.amendo-underpanel').removeClass('active').filter(function() { return $(this).data('under-panel') === under; }).addClass('active');
+    });
+
     // #b2b, #avdelinger osv. i adressen åpner den fanen — B2B-handlingene
     // sender tilbake hit, og varselet om avdelinger lenker til #avdelinger.
-    var fraAdresse = (window.location.hash || '').slice(1);
-    if (fraAdresse) $('.amendo-tab').filter(function() { return $(this).data('tab') === fraAdresse; }).first().trigger('click');
+    // #b2b-helsebygget åpner underfanen Helsebygget i B2B.
+    var fraAdresse = (window.location.hash || '').slice(1).split('-');
+    if (fraAdresse[0]) {
+        $('.amendo-tab').filter(function() { return $(this).data('tab') === fraAdresse[0]; }).first().trigger('click');
+        if (fraAdresse[1]) $('#tab-' + fraAdresse[0] + ' .amendo-undertab').filter(function() { return $(this).data('under') === fraAdresse[1]; }).first().trigger('click');
+    }
 
     // ── Hvilke faner er endret? (includes/lagring.php) ──
     // Hele skjemaet sendes ved hver lagring. En del som lagres som én option
     // (forsiden, menyen …) lagres bare når noe i den er endret HER: første
     // skriving, valg, klikk på en knapp eller dra-og-slipp setter flagget.
     $(document).on('input change sortupdate', '[data-amendo-del]', function(e) {
-        if ($(e.target).is('.amendo-endret')) return;
+        // Søkefeltet i kategorivelgeren endrer ingenting som lagres.
+        if ($(e.target).is('.amendo-endret, .amendo-kategori-sok')) return;
         $(this).find('> .amendo-endret').val('1');
     });
     $(document).on('click', '[data-amendo-del] button', function() {
+        // Knapper som bare viser noe («Vis grupper uten kunder»), endrer ingenting.
+        if ($(this).is('.amendo-bare-visning')) return;
         $(this).closest('[data-amendo-del]').find('> .amendo-endret').val('1');
     });
 
@@ -201,30 +217,49 @@ $(document).on('click', '.slett-periode', function() {
 });
 
 // ── Kategori-regler ──
+// Raden lages fra malen PHP har rendret (kategorivelgeren med navn og antall),
+// ikke et tallfelt for kategori-ID-en som før.
 var kategoriRegelTeller = $('#kategori-regler-liste .kategori-regel-rad').length;
 $('#legg-til-kategori-regel').on('click', function() {
-    // Hent kategori-select HTML fra første eksisterende rad eller lag tom
-    var i = kategoriRegelTeller++;
-    $('#kategori-regler-liste').append(
-        '<div class="kategori-regel-rad" style="border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:12px;">' +
-        '<div class="amendo-grid-2">' +
-        '<div class="amendo-field"><label>Kategori-ID</label>' +
-        '<input type="number" name="kategori_regler[' + i + '][kategori_id]" placeholder="WC kategori-ID"></div>' +
-        '<div class="amendo-field"><label>Prosesseringstid (virkedager)</label>' +
-        '<input type="number" name="kategori_regler[' + i + '][prosesseringstid]" min="0" max="30" placeholder="Standard"></div>' +
-        '</div><div class="amendo-grid-2">' +
-        '<div class="amendo-field"><label>Steng fra</label>' +
-        '<input type="date" name="kategori_regler[' + i + '][steng_fra]"></div>' +
-        '<div class="amendo-field"><label>Steng til</label>' +
-        '<input type="date" name="kategori_regler[' + i + '][steng_til]"></div>' +
-        '</div>' +
-        '<button type="button" class="slett-kategori-regel amendo-btn-danger">Slett regel</button>' +
-        '</div>'
-    );
+    var mal = $('#kategori-regel-mal').html();
+    if (!mal) return;
+    var $rad = $(mal.split('__i__').join(String(kategoriRegelTeller++)));
+    $('#kategori-regler-liste').append($rad);
+    kategoriVelgere($rad);
 });
 $(document).on('click', '.slett-kategori-regel', function() {
     $(this).closest('.kategori-regel-rad').remove();
 });
+
+    // ── Kategorivelgeren (includes/kategorivelger.php) ──
+    // Et søkefelt foran hver liste. Søket tar bort valgene som ikke passer
+    // (skjulte <option> virker ikke i Safari) og legger dem tilbake etterpå;
+    // det valgte står alltid. Enter velger det første treffet.
+    function kategoriVelgere(rot) {
+        $(rot || document).find('select.amendo-kategori-velger').each(function() {
+            var $select = $(this);
+            if ($select.data('alleValg')) return;
+            var $alle = $select.children('option');
+            $select.data('alleValg', $alle);
+            var $sok = $('<input type="search" class="amendo-kategori-sok" placeholder="Søk etter kategori …" aria-label="Søk etter kategori">');
+            $select.before($sok);
+            $sok.on('input', function() {
+                var q = String($sok.val()).trim().toLowerCase(), valgt = $select.val();
+                $alle.detach().filter(function() {
+                    return !this.value || this.value === valgt || !q || $(this).text().toLowerCase().indexOf(q) !== -1;
+                }).appendTo($select);
+                $select.val(valgt);
+            });
+            $sok.on('keydown', function(e) {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                var q = String($sok.val()).trim().toLowerCase();
+                var treff = $alle.filter(function() { return this.value && !this.disabled && $(this).text().toLowerCase().indexOf(q) !== -1; }).first();
+                if (treff.length) $select.val(treff.val()).trigger('change');
+            });
+        });
+    }
+    kategoriVelgere();
 
     // ── Kategoriraden ──
     // Navnene nummereres etter rekkefølgen i DOM-en etter hver endring, så
@@ -244,8 +279,11 @@ $(document).on('click', '.slett-kategori-regel', function() {
     function kategoriradOppdaterValg() {
         var brukt = {};
         $('.kategorirad-liste .kategorirad-term').each(function() { if (this.value) brukt[this.value] = true; });
-        $('.kategorirad-velg option').each(function() {
-            if (this.value) $(this).prop('disabled', !!brukt[this.value]);
+        // Alle valgene, også de søket har tatt bort for øyeblikket.
+        $('.kategorirad-velg').each(function() {
+            ($(this).data('alleValg') || $(this).find('option')).each(function() {
+                if (this.value) $(this).prop('disabled', !!brukt[this.value]);
+            });
         });
     }
 
@@ -296,7 +334,9 @@ $(document).on('click', '.slett-kategori-regel', function() {
         var $rep = $(this).closest('.amendo-repeter');
         var mal = $rep.find('template.amendo-repeter-mal').html();
         var i = $rep.find('.amendo-repeter-liste > .amendo-repeter-rad').length;
-        $rep.find('.amendo-repeter-liste').append(mal.split('__i__').join(i));
+        var $rad = $(mal.split('__i__').join(i));
+        $rep.find('.amendo-repeter-liste').append($rad);
+        kategoriVelgere($rad);
     });
 
     $(document).on('click', '.amendo-slett-rad', function() {
@@ -386,18 +426,9 @@ $(document).on('click', '.slett-kategori-regel', function() {
         if (!confirm($(this).data('bekreft'))) e.preventDefault();
     });
 
-    // Radene trenger ikke være nummerert fortløpende; serveren leser dem i
-    // rekkefølge. Telleren sørger bare for at to rader aldri deler navn.
-    var nesteGruppe = $('.kundegruppe-liste .kundegruppe-rad').length;
-    $('#legg-til-kundegruppe').on('click', function() {
-        var mal = $('.kundegruppe-mal').html();
-        if (!mal) return;
-        var $rad = $(mal.replace(/__i__/g, String(nesteGruppe++)));
-        $('.kundegruppe-liste').append($rad);
-        $rad.find('input[type="text"]').first().trigger('focus');
-    });
-
-    $(document).on('click', '.kundegruppe-fjern', function() {
-        $(this).closest('.kundegruppe-rad').remove();
+    // Kundegrupper: gruppene uten kunder er skjult til man ber om dem.
+    $('#vis-tomme-kundegrupper').on('click', function() {
+        $('.kundegruppe-tom').prop('hidden', false);
+        $(this).remove();
     });
 });

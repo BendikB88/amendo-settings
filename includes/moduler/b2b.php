@@ -2,7 +2,7 @@
 /**
  * Modulen B2B. Lastes BARE når modulen er på — se includes/moduler.php.
  *
- * Fanen 🏢 B2B har tre deler:
+ * Fanen 🏢 B2B har tre underfaner. Bedrifter:
  *
  * 1. SØKNADER. `/bedrift/registrer` i frontenden lager en kunde med
  *        _orgnr_soknad   org.nummeret slik kunden oppga det
@@ -24,25 +24,12 @@
  * 2. AKTIVE B2B-KUNDER: alle med `billing_org_number`, søkbart på org.nr og
  *    firmanavn (`billing_company`).
  *
- * 3. RETTIGHETER PER KUNDEGRUPPE (`_tellixGroupId`). Lagres i
- *    `amendo_kundegruppe_config`, og ligger i /settings som
- *        kundegruppe_config: { "3": { faktura: 1, b2b: 0, helsebygget: 0, helsebygget_rabatt: 0 }, … }
- *    — formen Garçon-frontenden leser i lib/kundegruppe-config.ts.
+ * Kundegrupper (1.4.17): én rad per Tellix-gruppe med rabatt, hvor den
+ * gjelder, faktura, bedriftsvisning og levering — se b2b-kundegrupper.php.
+ * Erstatter tabellen `amendo_kundegruppe_config` og Helsebygget-lista.
  *
- *    ⚠⚠ FRONTENDEN BYTTER KILDE SÅ SNART TABELLEN HAR ÉN RAD. Mens
- *    `kundegruppe_config` er tom, bruker den miljøvariablene i Vercel
- *    (FAKTURA_KUNDEGRUPPER, HELSEBYGGET_GRUPPE_IDS, BEDRIFT_GRUPPE_IDS); med
- *    én rad bruker den BARE tabellen. Derfor:
- *    - alle fire rettighetene står i samme tabell, ikke bare faktura. En tabell
- *      med bare faktura ville tatt Helsebygget-rabatten og B2B-visningen fra
- *      alle andre grupper i det øyeblikket den ble lagret.
- *    - en rad uten noen rettighet lagres IKKE. Gruppene vi finner hos kundene
- *      vises som tomme rader til utfylling; ble de lagret tomme, ville første
- *      lagring av hvilken som helst fane gjort tabellen ikke-tom og slått av
- *      alt for alle.
- *
- *    ⚠ Gruppenavnet vises bare i wp-admin og er IKKE med i /settings, som er
- *    offentlig. «Personalrabatt 50» angår ingen utenfor butikken.
+ * Helsebygget (1.4.17): ansatte med personlige PIN-koder og loggen over
+ * endringer i sortimentet — se b2b-helsebygget.php og includes/helsebygget.php.
  */
 
 if (!defined('ABSPATH')) exit;
@@ -147,101 +134,6 @@ function amendo_b2b_kunder($sok, $side) {
     return ['kunder' => $q->get_results(), 'totalt' => (int) $q->get_total()];
 }
 
-// ── Rettigheter per kundegruppe ─────────────────────────────────────────────
-
-const AMENDO_B2B_RETTIGHETER = ['faktura' => 'Faktura', 'b2b' => 'B2B-visning', 'helsebygget' => 'Helsebygget'];
-
-/** Lagret: [gruppe-id => [navn, faktura, b2b, helsebygget, helsebygget_rabatt]]. */
-function amendo_b2b_kundegrupper() {
-    $data = json_decode((string) get_option('amendo_kundegruppe_config', ''), true);
-    return is_array($data) ? $data : [];
-}
-
-/** Gruppe-ID-ene kundene faktisk har, med antall kunder. */
-function amendo_b2b_grupper_hos_kunder() {
-    global $wpdb;
-    $rader = $wpdb->get_results($wpdb->prepare(
-        "SELECT meta_value AS id, COUNT(*) AS antall FROM {$wpdb->usermeta} WHERE meta_key = %s AND meta_value <> '' GROUP BY meta_value",
-        '_tellixGroupId'
-    ));
-    $ut = [];
-    foreach ($rader ?: [] as $r) $ut[(string) $r->id] = (int) $r->antall;
-    uksort($ut, 'strnatcmp');
-    return $ut;
-}
-
-/** Fra $_POST. Gjør ingenting uten markøren `kundegruppe_config[finnes]`. */
-function amendo_b2b_kundegrupper_lagre(array $post) {
-    $inn = $post['kundegruppe_config'] ?? null;
-    if (!is_array($inn) || empty($inn['finnes']) || !amendo_lagring_skal_lagre($post, 'kundegrupper')) return;
-
-    // ⚠ Er Helsebygget-lista lagret (b2b-tellix.php), gjelder bare den:
-    // Helsebygget-kolonnene her er da skrivebeskyttet, og det som stod lagret
-    // fra før blir stående urørt (så det gjelder igjen om lista fjernes).
-    $liste  = amendo_helsebygget_lagret();
-    $gammel = amendo_b2b_kundegrupper();
-    $ut = [];
-    foreach (is_array($inn['rader'] ?? null) ? $inn['rader'] : [] as $rad) {
-        if (!is_array($rad)) continue;
-        $id = trim((string) ($rad['id'] ?? ''));
-        if (!preg_match('/^[A-Za-z0-9_-]{1,32}$/', $id) || isset($ut[$id])) continue;
-
-        $gruppe = ['navn' => mb_substr(sanitize_text_field((string) ($rad['navn'] ?? '')), 0, 80)];
-        foreach (array_keys(AMENDO_B2B_RETTIGHETER) as $r) $gruppe[$r] = !empty($rad[$r]) ? 1 : 0;
-        // Satsen betyr bare noe med Helsebygget-rett — samme tolkning som frontenden.
-        $gruppe['helsebygget_rabatt'] = $gruppe['helsebygget'] ? min(100, max(0, (int) ($rad['helsebygget_rabatt'] ?? 0))) : 0;
-        if ($liste !== null) {
-            $gruppe['helsebygget']        = (int) !empty($gammel[$id]['helsebygget']);
-            $gruppe['helsebygget_rabatt'] = (int) ($gammel[$id]['helsebygget_rabatt'] ?? 0);
-        }
-
-        // ⚠ Rad uten rettigheter lagres ikke — se toppen av fila.
-        if (!$gruppe['faktura'] && !$gruppe['b2b'] && !$gruppe['helsebygget']) continue;
-        $ut[$id] = $gruppe;
-    }
-    update_option('amendo_kundegruppe_config', wp_json_encode((object) $ut), false);
-}
-
-add_action('amendo_lagre_innstillinger', 'amendo_b2b_kundegrupper_lagre');
-
-// Kundegruppe-tabellen er én samlet option — se includes/lagring.php.
-add_filter('amendo_lagring_deler', function($deler) { return $deler + ['kundegrupper' => 'amendo_kundegruppe_config']; });
-add_filter('amendo_lagring_navn', function($navn) { return $navn + ['kundegrupper' => 'B2B-kundegrupper']; });
-
-// ── /settings ───────────────────────────────────────────────────────────────
-
-add_filter('amendo_settings_svar', function($svar) {
-    $config = [];
-    foreach (amendo_b2b_kundegrupper() as $id => $g) {
-        // Ikke navnet: /settings er offentlig.
-        $config[(string) $id] = [
-            'faktura'            => (int) !empty($g['faktura']),
-            'b2b'                => (int) !empty($g['b2b']),
-            'helsebygget'        => (int) !empty($g['helsebygget']),
-            'helsebygget_rabatt' => (int) ($g['helsebygget_rabatt'] ?? 0),
-        ];
-    }
-    // Helsebygget-lista, når den er lagret, er eneste kilde for Helsebygget.
-    // ⚠ Bare når tabellen alt har rader: en tom tabell skal forbli `{}`, ellers
-    // bytter frontenden kilde for faktura og B2B-visning også — se toppen.
-    $liste = amendo_helsebygget_lagret();
-    if ($liste !== null && $config) {
-        foreach ($config as $id => &$g) {
-            $g['helsebygget']        = (int) array_key_exists((int) $id, $liste);
-            $g['helsebygget_rabatt'] = (int) round($liste[(int) $id] ?? 0);
-        }
-        unset($g);
-        foreach ($liste as $id => $pst) {
-            if (!isset($config[(string) $id])) {
-                $config[(string) $id] = ['faktura' => 0, 'b2b' => 0, 'helsebygget' => 1, 'helsebygget_rabatt' => (int) round($pst)];
-            }
-        }
-    }
-    // Objekt, også når det er tomt: `{}`, ikke `[]`.
-    $svar['kundegruppe_config'] = (object) $config;
-    return $svar;
-});
-
 // ── Admin ───────────────────────────────────────────────────────────────────
 
 add_action('amendo_admin_faner', function() {
@@ -262,30 +154,6 @@ add_action('amendo_admin_etter_skjema', function() {
     <?php
 });
 
-/** Én rad i kundegruppe-tabellen. `$i` er et tall, eller «__i__» i malen. */
-function amendo_b2b_gruppe_rad($i, $id, array $g, $antall) {
-    $p = "kundegruppe_config[rader][$i]";
-    $liste = amendo_helsebygget_lagret();
-    if ($liste !== null) {
-        // Skrivebeskyttet: Helsebygget-lista nederst gjelder.
-        $g['helsebygget'] = $id !== '' && array_key_exists((int) $id, $liste);
-        $g['helsebygget_rabatt'] = $g['helsebygget'] ? $liste[(int) $id] : 0;
-    }
-    ?>
-    <tr class="kundegruppe-rad">
-        <td><input type="text" name="<?php echo esc_attr($p); ?>[id]" value="<?php echo esc_attr($id); ?>" placeholder="ID" size="5" aria-label="Gruppe-ID"></td>
-        <td><input type="text" name="<?php echo esc_attr($p); ?>[navn]" value="<?php echo esc_attr($g['navn'] ?? ''); ?>" placeholder="Navn (bare her)" aria-label="Navn"></td>
-        <td class="kundegruppe-antall"><?php echo $antall === null ? '' : esc_html((string) $antall); ?></td>
-        <?php foreach (AMENDO_B2B_RETTIGHETER as $r => $etikett): ?>
-            <?php $laast = $r === 'helsebygget' && $liste !== null; ?>
-            <td><input type="checkbox" <?php echo $laast ? 'disabled class="kundegruppe-laast"' : 'name="' . esc_attr($p . "[$r]") . '"'; ?> value="1" <?php checked(!empty($g[$r])); ?> aria-label="<?php echo esc_attr($etikett); ?>"></td>
-        <?php endforeach; ?>
-        <td><input type="number" <?php echo $liste !== null ? 'disabled class="kundegruppe-laast"' : 'name="' . esc_attr($p) . '[helsebygget_rabatt]"'; ?> value="<?php echo esc_attr(!empty($g['helsebygget']) ? (int) ($g['helsebygget_rabatt'] ?? 0) : ''); ?>" min="0" max="100" style="width:70px" aria-label="Helsebygget-rabatt i prosent"></td>
-        <td><button type="button" class="amendo-btn-danger kundegruppe-fjern">Fjern</button></td>
-    </tr>
-    <?php
-}
-
 const AMENDO_B2B_MELDINGER = [
     'godkjent'      => ['ok', 'Søknaden er godkjent. Kunden har nå bedriftstilgang.'],
     'avvist'        => ['ok', 'Søknaden er avvist.'],
@@ -301,14 +169,21 @@ add_action('amendo_admin_paneler', function() {
     $sok      = sanitize_text_field(wp_unslash((string) ($_GET['b2b_sok'] ?? '')));
     $side     = max(1, (int) ($_GET['b2b_side'] ?? 1));
     $kunder   = amendo_b2b_kunder($sok, $side);
-    $grupper  = amendo_b2b_kundegrupper();
-    $hos_kunder = amendo_b2b_grupper_hos_kunder();
     $sider    = (int) ceil($kunder['totalt'] / AMENDO_B2B_PER_SIDE);
     ?>
     <div class="amendo-panel" id="tab-b2b">
         <?php if ($melding): ?>
             <div class="amendo-b2b-melding amendo-b2b-melding-<?php echo esc_attr($melding[0]); ?>"><?php echo esc_html($melding[1]); ?></div>
         <?php endif; ?>
+
+        <?php // Underfaner. Alt står i hovedskjemaet; admin.js viser én om gangen. ?>
+        <div class="amendo-undernav" role="tablist">
+            <button type="button" class="amendo-undertab active" data-under="bedrifter">Bedrifter</button>
+            <button type="button" class="amendo-undertab" data-under="kundegrupper">Kundegrupper</button>
+            <button type="button" class="amendo-undertab" data-under="helsebygget">Helsebygget</button>
+        </div>
+
+        <div class="amendo-underpanel active" data-under-panel="bedrifter">
 
         <div class="amendo-card" id="b2b-soknader">
             <h2>Søknader (<?php echo count($soknader); ?>)</h2>
@@ -363,7 +238,7 @@ add_action('amendo_admin_paneler', function() {
                     <td><?php echo esc_html(get_user_meta($u->ID, 'billing_company', true) ?: '—'); ?></td>
                     <td><?php echo esc_html(get_user_meta($u->ID, 'billing_org_number', true)); ?></td>
                     <td><a href="<?php echo esc_url(get_edit_user_link($u->ID)); ?>"><?php echo esc_html(trim($u->first_name . ' ' . $u->last_name) ?: $u->display_name); ?></a><br><span class="field-help"><?php echo esc_html($u->user_email); ?></span></td>
-                    <td><?php echo esc_html(get_user_meta($u->ID, '_tellixGroupId', true) ?: '—'); ?></td>
+                    <td><?php $gid = (int) get_user_meta($u->ID, '_tellixGroupId', true); echo esc_html($gid ? ((amendo_tellix_grupper()[$gid]['navn'] ?? '') ?: (string) $gid) : '—'); ?></td>
                     <td><?php echo esc_html($behandlet ? wp_date('d.m.Y', strtotime($behandlet)) : '—'); ?></td>
                 </tr>
                 <?php endforeach; ?>
@@ -380,37 +255,19 @@ add_action('amendo_admin_paneler', function() {
             <?php endif; ?>
         </div>
 
-        <div class="amendo-card" id="b2b-kundegrupper" data-amendo-del="kundegrupper">
-            <?php amendo_lagring_felt('kundegrupper'); ?>
-            <h2>Faktura og rettigheter per kundegruppe</h2>
-            <p class="amendo-desc">Hva hver kundegruppe (<code>_tellixGroupId</code>) får på nettsiden. Rader uten noen avkrysning lagres ikke.</p>
-            <p class="amendo-advarsel">⚠ Så lenge tabellen er tom, bruker nettsiden innstillingene sine i Vercel. Når den første raden lagres, bruker den <strong>bare denne tabellen</strong> — fyll derfor inn alle gruppene som skal ha faktura, B2B-visning eller Helsebygget-rabatt før du lagrer.</p>
-            <?php if (amendo_helsebygget_lagret() !== null): ?>
-                <p class="field-help amendo-helsebygget-merknad">Helsebygget og rabatt er skrivebeskyttet her: <a href="#b2b-helsebygget">Helsebygget-gruppene</a> nederst i fanen gjelder.</p>
-            <?php endif; ?>
-            <input type="hidden" name="kundegruppe_config[finnes]" value="1">
-            <table class="amendo-tabell kundegruppe-tabell">
-                <thead><tr><th>ID</th><th>Navn</th><th>Kunder</th><?php foreach (AMENDO_B2B_RETTIGHETER as $etikett): ?><th><?php echo esc_html($etikett); ?></th><?php endforeach; ?><th>Rabatt %</th><th></th></tr></thead>
-                <tbody class="kundegruppe-liste">
-                <?php
-                $i = 0;
-                foreach ($grupper as $id => $g) amendo_b2b_gruppe_rad($i++, (string) $id, $g, $hos_kunder[(string) $id] ?? 0);
-                // Gruppene kundene har, men som ikke står i tabellen ennå.
-                foreach ($hos_kunder as $id => $antall) {
-                    if (!isset($grupper[$id])) amendo_b2b_gruppe_rad($i++, (string) $id, [], $antall);
-                }
-                ?>
-                </tbody>
-            </table>
-            <template class="kundegruppe-mal"><?php amendo_b2b_gruppe_rad('__i__', '', [], null); ?></template>
-            <button type="button" class="amendo-btn-secondary" id="legg-til-kundegruppe" style="margin-top:12px">+ Legg til kundegruppe</button>
-            <p class="field-help">Rabatten gjelder bare på Helsebygget-siden, og bare for grupper med Helsebygget krysset av.</p>
         </div>
 
-        <?php // Kundegrupper fra Tellix og Helsebygget-gruppene — se includes/moduler/b2b-tellix.php. ?>
-        <?php do_action('amendo_b2b_kort'); ?>
+        <div class="amendo-underpanel" data-under-panel="kundegrupper">
+            <?php amendo_kg_kort(); ?>
+        </div>
+
+        <div class="amendo-underpanel" data-under-panel="helsebygget">
+            <?php amendo_hb_kort(); ?>
+        </div>
     </div>
     <?php
 });
 
 require_once __DIR__ . '/b2b-tellix.php';
+require_once __DIR__ . '/b2b-kundegrupper.php';
+require_once __DIR__ . '/b2b-helsebygget.php';

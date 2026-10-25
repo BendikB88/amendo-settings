@@ -620,26 +620,8 @@ function amendo_forside_kort_rad($i, $rad) {
     <?php
 }
 
-/** Produktkategoriene til velgeren: [term_id => «Forelder › Barn»], sortert på navnet. */
-function amendo_forside_kategorivalg() {
-    $terms = get_terms(['taxonomy' => 'product_cat', 'hide_empty' => false]);
-    if (is_wp_error($terms)) return [];
-    $per_id = [];
-    foreach ($terms as $t) $per_id[$t->term_id] = $t;
-    $ut = [];
-    foreach ($terms as $t) {
-        $navn = [wp_specialchars_decode($t->name, ENT_QUOTES)];
-        for ($p = $t->parent, $i = 0; $p && isset($per_id[$p]) && $i < 10; $p = $per_id[$p]->parent, $i++) {
-            array_unshift($navn, wp_specialchars_decode($per_id[$p]->name, ENT_QUOTES));
-        }
-        $ut[$t->term_id] = implode(' › ', $navn);
-    }
-    asort($ut, SORT_NATURAL | SORT_FLAG_CASE);
-    return $ut;
-}
-
 /** Én kategoriflis. */
-function amendo_forside_flis_rad($i, $rad, $kategorier) {
+function amendo_forside_flis_rad($i, $rad) {
     $p = 'forside[kategorifliser][' . $i . ']';
     $valgt = (int) ($rad['term_id'] ?? 0);
     ?>
@@ -647,12 +629,8 @@ function amendo_forside_flis_rad($i, $rad, $kategorier) {
         <div class="amendo-grid-2">
             <div class="amendo-field">
                 <label>Kategori</label>
-                <select name="<?php echo esc_attr($p); ?>[term_id]">
-                    <option value="">— Velg kategori —</option>
-                    <?php foreach ($kategorier as $id => $navn): ?>
-                        <option value="<?php echo (int) $id; ?>" <?php selected($valgt, (int) $id); ?>><?php echo esc_html($navn); ?></option>
-                    <?php endforeach; ?>
-                </select>
+                <?php // Med søk og antall produkter — se includes/kategorivelger.php. ?>
+                <?php amendo_kategori_velger($p . '[term_id]', $valgt); ?>
             </div>
             <div class="amendo-field">
                 <label>Tittel (tom = kategoriens navn)</label>
@@ -721,7 +699,6 @@ function amendo_forside_seksjoner_blokk($liste) {
 function amendo_forside_fane() {
     list($f, $kilde) = amendo_forside_for_skjema();
     $u = amendo_forside_utvidet_for_skjema();
-    $kategorier = amendo_forside_kategorivalg();
     ?>
     <div class="amendo-panel" id="tab-forside" data-amendo-del="forside">
         <?php amendo_lagring_felt('forside'); ?>
@@ -786,9 +763,9 @@ function amendo_forside_fane() {
             </div>
             <div class="amendo-repeter" data-repeter="kategorifliser">
                 <div class="amendo-repeter-liste">
-                    <?php foreach ($u['kategorifliser'] as $i => $rad) amendo_forside_flis_rad($i, $rad, $kategorier); ?>
+                    <?php foreach ($u['kategorifliser'] as $i => $rad) amendo_forside_flis_rad($i, $rad); ?>
                 </div>
-                <template class="amendo-repeter-mal"><?php amendo_forside_flis_rad('__i__', [], $kategorier); ?></template>
+                <template class="amendo-repeter-mal"><?php amendo_forside_flis_rad('__i__', []); ?></template>
                 <button type="button" class="amendo-btn-secondary amendo-legg-til-rad" style="margin-top:12px">+ Legg til flis</button>
             </div>
         </div>

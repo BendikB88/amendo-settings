@@ -48,7 +48,7 @@ add_action('rest_api_init', function() {
             'krok_admin_post'    => (bool) has_action('admin_post_amendo_b2b_soknad'),
             'html_fane_b2b'      => strpos($html, 'data-tab="b2b"') !== false,
             'html_panel_b2b'     => strpos($html, 'id="tab-b2b"') !== false,
-            'html_kundegrupper'  => strpos($html, 'kundegruppe_config') !== false,
+            'html_kundegrupper'  => strpos($html, 'id="b2b-kundegrupper"') !== false,
             'html_skjema_b2b'    => strpos($html, 'amendo-b2b-behandle') !== false,
             'html_fane_moduler'  => strpos($html, 'data-tab="moduler"') !== false,
             'html_b2b_avkrysset' => (bool) preg_match('/name="moduler\[paa\]\[b2b\]" value="1"\s+checked/', $html),

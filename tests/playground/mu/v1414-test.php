@@ -22,13 +22,19 @@ add_action('rest_api_init', function() {
             'avdelinger' => 'amendo_avdelinger', 'stengte' => 'amendo_stengte_perioder',
             'kundegrupper' => 'amendo_kundegruppe_config', 'sync_size' => 'amendo_test_sync_size',
             'side' => 'amendo_test_tellix_side', 'api_feil' => 'amendo_test_tellix_api_feil',
+            'kundegrupper_ny' => 'amendo_kundegrupper',
         ];
         foreach ($map as $k => $opt) {
             if (!array_key_exists($k, $p)) continue;
             $v = $p[$k];
             if ($v === null) delete_option($opt);
-            elseif (is_array($v)) update_option($opt, wp_json_encode(in_array($k, ['helsebygget', 'kundegrupper'], true) ? (object) $v : $v));
+            elseif (is_array($v)) update_option($opt, wp_json_encode(in_array($k, ['helsebygget', 'kundegrupper', 'kundegrupper_ny'], true) ? (object) $v : $v));
             else update_option($opt, (string) $v);
+        }
+        // Fakturagatewayens innstillinger (Amendo Gateway): en array, ikke JSON.
+        if (array_key_exists('faktura', $p)) {
+            if ($p['faktura'] === null) delete_option('woocommerce_amendo-invoice_settings');
+            else update_option('woocommerce_amendo-invoice_settings', (array) $p['faktura']);
         }
         // HPOS, som på garcon.no: filterkroken i ordrelisten finnes bare der,
         // og wc_get_orders støtter meta_query bare der.
@@ -128,6 +134,8 @@ add_action('rest_api_init', function() {
             'helsebygget' => get_option('amendo_helsebygget_grupper', null),
             'stengte'     => json_decode((string) get_option('amendo_stengte_perioder', 'null'), true),
             'kundegrupper' => json_decode((string) get_option('amendo_kundegruppe_config', 'null'), true),
+            'kundegrupper_ny' => json_decode((string) get_option('amendo_kundegrupper', 'null'), true),
+            'faktura'      => get_option('woocommerce_amendo-invoice_settings', null),
         ];
     });
 

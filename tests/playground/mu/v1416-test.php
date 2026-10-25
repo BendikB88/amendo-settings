@@ -49,7 +49,7 @@ add_action('rest_api_init', function() {
             'stengte'      => $les('amendo_stengte_perioder'),
             'regler'       => $les('amendo_kategori_regler'),
             'avdelinger'   => $les('amendo_avdelinger'),
-            'kundegrupper' => $les('amendo_kundegruppe_config'),
+            'kundegrupper' => $les('amendo_kundegrupper'),
         ];
     });
 });

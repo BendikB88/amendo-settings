@@ -82,13 +82,17 @@ sjekk('lagres som før', l.forside?.hero_tittel === 'Som før' && l.meny?.[0]?.l
 
 // ── B2B-kundegruppene ───────────────────────────────────────────────────────
 console.log('\nB2B: kundegruppe-tabellen');
-await sett({ amendo_moduler: ['b2b'], amendo_kundegruppe_config: { 14: { navn: 'Bedrift', faktura: 1, b2b: 1, helsebygget: 0, helsebygget_rabatt: 0 } } });
+// 1.4.17: tabellen er amendo_kundegrupper (b2b-kundegrupper.php).
+await sett({ amendo_moduler: ['b2b'], amendo_kundegrupper: { 14: { gjelder: 'nettbutikk', b2b: 1, levering: 0 } } });
 v = await versjon();
 sjekk('kundegruppene er en egen del når B2B er på', /^[0-9a-f]{32}$/.test(v.kundegrupper || ''), v);
-l = await lagre({ amendo_endret: { ...urort, kundegrupper: '' }, amendo_versjon: v, kundegruppe_config: { finnes: '1', rader: [] } });
-sjekk('urørt tabell: står', l.kundegrupper?.['14']?.faktura === 1, l.kundegrupper);
-l = await lagre({ amendo_endret: { ...urort, kundegrupper: '1' }, amendo_versjon: v, kundegruppe_config: { finnes: '1', rader: [{ id: '3', faktura: '1' }] } });
-sjekk('endret tabell: lagret', l.kundegrupper?.['3']?.faktura === 1 && !('14' in (l.kundegrupper || {})), l.kundegrupper);
+l = await lagre({ amendo_endret: { ...urort, kundegrupper: '' }, amendo_versjon: v, kundegrupper: { finnes: '1', rader: { 14: { med: '1' } } } });
+sjekk('urørt tabell: står', l.kundegrupper?.['14']?.b2b === 1, l.kundegrupper);
+l = await lagre({ amendo_endret: { ...urort, kundegrupper: '1' }, amendo_versjon: v, kundegrupper: { finnes: '1', rader: { 3: { med: '1', b2b: '1' } } } });
+sjekk('endret tabell: lagret (bare radene som er sendt)', l.kundegrupper?.['3']?.b2b === 1 && l.kundegrupper?.['14']?.b2b === 1, l.kundegrupper);
+await sett({ amendo_kundegrupper: { 14: { gjelder: 'nettbutikk', b2b: 0, levering: 0 } } });
+l = await lagre({ amendo_endret: { ...urort, kundegrupper: '1' }, amendo_versjon: v, kundegrupper: { finnes: '1', rader: { 3: { med: '1' } } } });
+sjekk('endret i nettleseren OG på serveren: avvist', /avvist=kundegrupper/.test(l.til || '') && l.kundegrupper?.['14']?.b2b === 0 && !('3' in (l.kundegrupper || {})), [l.til, l.kundegrupper]);
 
 // ── admin.js ────────────────────────────────────────────────────────────────
 console.log('\nadmin.js i jsdom');
@@ -113,5 +117,5 @@ const velg = d.querySelector('#kategorirad .kategorirad-velg');
 if (velg) { velg.dispatchEvent(new w.Event('change', { bubbles: true })); }
 sjekk('valg i kategoriraden: kategorirad endret', !velg || flagg('kategorirad') === '1');
 
-await sett({ amendo_moduler: null, amendo_kundegruppe_config: null });
+await sett({ amendo_moduler: null, amendo_kundegrupper: null });
 ferdig();

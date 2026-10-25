@@ -151,7 +151,7 @@ function amendo_kategorirad_admin_liste($liste, array $rader, array $kategorier)
         </div>
         <template class="kategorirad-mal"><?php amendo_kategorirad_admin_rad($liste, '__i__', [], '', null); ?></template>
         <div class="kategorirad-legg-til">
-            <select class="kategorirad-velg" aria-label="Velg kategori">
+            <select class="kategorirad-velg amendo-kategori-velger" aria-label="Velg kategori">
                 <option value="">Velg kategori …</option>
                 <?php foreach ($kategorier as $k): ?>
                     <option value="<?php echo esc_attr($k['term_id']); ?>" data-navn="<?php echo esc_attr($k['navn']); ?>" data-antall="<?php echo esc_attr($k['antall']); ?>"><?php echo esc_html($k['navn'] . ' (' . $k['antall'] . ')'); ?></option>

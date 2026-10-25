@@ -293,7 +293,7 @@ function amendo_test_forside(WP_REST_Request $req) {
             ob_start(); amendo_settings_page(); $html = ob_get_clean();
             $ut['kursiv_etikett'] = strpos($html, 'Tittel, linje 2 (kursiv)') !== false;
             $ut['acf_forhandsutfylt'] = (bool) preg_match('/name="forside\[lok_tittel\]" value="ACF lok"/', $html);
-            $ut['flis_valgt'] = (bool) preg_match('/<option value="' . $ider['bukser'] . '"\s+selected=\'selected\'>Klær › Bukser<\/option>/u', $html);
+            $ut['flis_valgt'] = (bool) preg_match('/<option value="' . $ider['bukser'] . '"\s+selected=\'selected\'>Klær › Bukser \(\d+\)<\/option>/u', $html);
             $ut['kategorinavn_dekodet'] = strpos($html, 'Sko &amp; støvler') !== false && strpos($html, '&amp;amp;') === false;
             $ut['flis_mal'] = strpos($html, 'name="forside[kategorifliser][__i__][term_id]"') !== false;
             $ut['galleri_mal'] = strpos($html, 'name="forside[galleri_bilder][__i__][bilde]"') !== false && strpos($html, 'name="forside[galleri_bilder][__i__][bilde_id]"') !== false;

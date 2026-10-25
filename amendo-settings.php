@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.16
+ * Version: 1.4.17
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.16');
+define('AMENDO_SETTINGS_VERSION', '1.4.17');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -24,6 +24,8 @@ require_once AMENDO_SETTINGS_PATH . 'includes/ubetalte.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/kortbetaling.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/stengte.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/lagring.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/kategorivelger.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/helsebygget.php';
 // Sist: laster modulene som er på, og de kan bruke alt over.
 require_once AMENDO_SETTINGS_PATH . 'includes/moduler.php';
 
@@ -278,11 +280,8 @@ add_action('rest_api_init', function() {
     register_rest_route('amendo-settings/v1', '/helsebygget-produkter', [
         'methods'             => 'POST',
         'callback'            => 'amendo_set_helsebygget_produkter',
-        'permission_callback' => function($request) {
-            $secret = get_option('amendo_kasse_secret', '');
-            if (empty($secret)) return true;
-            return hash_equals($secret, (string) $request->get_header('X-Amendo-Secret'));
-        },
+        // Secret OG token fra PIN-innloggingen — se includes/helsebygget.php.
+        'permission_callback' => 'amendo_hb_produkter_tilgang',
     ]);
 });
 
@@ -312,7 +311,11 @@ function amendo_get_helsebygget_produkter() {
 function amendo_set_helsebygget_produkter($request) {
     $body = $request->get_json_params();
     $ids  = array_map('intval', $body['aktive_ids'] ?? []);
+    $foer = array_map('intval', json_decode(get_option('amendo_helsebygget_produkter', '[]'), true) ?: []);
     update_option('amendo_helsebygget_produkter', json_encode($ids));
+    // Hvem, når og hva — se includes/helsebygget.php.
+    $ansatt = amendo_hb_token_sjekk((string) $request->get_header('X-Helsebygget-Token'));
+    if ($ansatt) amendo_hb_logg_skriv($ansatt, $foer, $ids);
     return new WP_REST_Response(['ok' => true, 'aktive' => count($ids)], 200);
 }
 
@@ -862,38 +865,10 @@ function amendo_settings_page() {
                     <div id="kategori-regler-liste">
                         <?php
                         $regler = json_decode(get_option('amendo_kategori_regler','[]'), true) ?: [];
-                        $kategorier = get_terms(['taxonomy'=>'product_cat','hide_empty'=>false,'number'=>100]);
-                        foreach ($regler as $i => $r):
+                        foreach ($regler as $i => $r) amendo_kategori_regel_rad($i, $r);
                         ?>
-                        <div class="kategori-regel-rad" style="border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:12px;">
-                            <div class="amendo-grid-2">
-                                <div class="amendo-field">
-                                    <label>Kategori</label>
-                                    <select name="kategori_regler[<?php echo $i; ?>][kategori_id]" style="width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;">
-                                        <?php foreach($kategorier as $kat): ?>
-                                        <option value="<?php echo $kat->term_id; ?>" <?php selected($r['kategori_id']??'',$kat->term_id); ?>><?php echo esc_html($kat->name); ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
-                                <div class="amendo-field">
-                                    <label>Prosesseringstid (virkedager, tom = standard)</label>
-                                    <input type="number" name="kategori_regler[<?php echo $i; ?>][prosesseringstid]" value="<?php echo esc_attr($r['prosesseringstid']??''); ?>" min="0" max="30" placeholder="Standard">
-                                </div>
-                            </div>
-                            <div class="amendo-grid-2">
-                                <div class="amendo-field">
-                                    <label>Steng fra dato</label>
-                                    <input type="date" name="kategori_regler[<?php echo $i; ?>][steng_fra]" value="<?php echo esc_attr($r['steng_fra']??''); ?>">
-                                </div>
-                                <div class="amendo-field">
-                                    <label>Steng til dato</label>
-                                    <input type="date" name="kategori_regler[<?php echo $i; ?>][steng_til]" value="<?php echo esc_attr($r['steng_til']??''); ?>">
-                                </div>
-                            </div>
-                            <button type="button" class="slett-kategori-regel amendo-btn-danger">Slett regel</button>
-                        </div>
-                        <?php endforeach; ?>
                     </div>
+                    <template id="kategori-regel-mal"><?php amendo_kategori_regel_rad('__i__', []); ?></template>
                     <button type="button" class="amendo-btn-secondary" id="legg-til-kategori-regel">+ Legg til regel</button>
                 </div>
             </div>

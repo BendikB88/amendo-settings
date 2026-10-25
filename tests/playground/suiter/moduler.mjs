@@ -71,41 +71,25 @@ sjekk('slått på igjen: på', JSON.stringify(l.aktive) === '["b2b"]', l);
 l = await lagre({ butikk_navn: 'Test', moduler: { finnes: '1', paa: { b2b: '1', ukjent: '1' } } });
 sjekk('ukjent modulnøkkel lagres ikke', JSON.stringify(l.aktive) === '["b2b"]', l);
 
-// ── Rettigheter per kundegruppe ─────────────────────────────────────────────
-console.log('\nRettigheter per kundegruppe');
-await klargjor({ aktive: ['b2b'], kundegrupper: null, slett_brukere: true });
-l = await lagre({ kundegruppe_config: { finnes: '1', rader: [
-  { id: '3', navn: 'Faktura 25 % rabatt', faktura: '1' },
-  { id: '14', navn: 'Bedriftskunder', faktura: '1', b2b: '1' },
-  { id: '4', navn: 'NAV <b>Lillestrøm</b>', helsebygget: '1', helsebygget_rabatt: '40' },
-  { id: '19', navn: 'Personalrabatt 50', helsebygget: '1', helsebygget_rabatt: '150' },
-  { id: '7', navn: 'Uten Helsebygget', b2b: '1', helsebygget_rabatt: '40' },
-  { id: '5', navn: 'Ingen rettigheter' },
-  { id: '3', navn: 'Duplikat', b2b: '1' },
-  { id: 'a b"<', faktura: '1' },
-  { id: '', faktura: '1' },
-] } });
-const kg = l.kundegrupper || {};
-// Sortert: JavaScript ordner tall-nøkler i objekter stigende uansett.
-sjekk('lagret: gruppene med rettigheter', JSON.stringify(Object.keys(kg).sort()) === JSON.stringify(['14', '19', '3', '4', '7']), Object.keys(kg));
-sjekk('rad uten rettigheter lagres ikke', !('5' in kg));
-sjekk('duplikat: første vinner', kg['3']?.faktura === 1 && kg['3']?.b2b === 0 && kg['3']?.navn === 'Faktura 25 % rabatt', kg['3']);
-sjekk('ugyldig og tom ID avvises', !Object.keys(kg).some(k => /[^A-Za-z0-9_-]/.test(k) || k === ''));
-sjekk('navn renset for HTML', kg['4']?.navn === 'NAV Lillestrøm', kg['4']?.navn);
-sjekk('rabatt kappes til 100', kg['19']?.helsebygget_rabatt === 100, kg['19']);
-sjekk('rabatt uten Helsebygget blir 0', kg['7']?.helsebygget_rabatt === 0 && kg['7']?.helsebygget === 0, kg['7']);
-
+// ── Den gamle kundegruppe-tabellen (≤ 1.4.16) ──────────────────────────────
+// 1.4.17: tabellen i admin er byttet ut (b2b-kundegrupper.php, suiten
+// `kundegrupper`), men en butikk med rader i amendo_kundegruppe_config skal
+// få det samme i /settings som før, med de gamle feltene.
+console.log('\nDen gamle kundegruppe-tabellen i /settings');
+await klargjor({ aktive: ['b2b'], kundegrupper: {
+  14: { navn: 'Bedriftskunder', faktura: 1, b2b: 1, helsebygget: 0, helsebygget_rabatt: 0 },
+  4: { navn: 'NAV Lillestrøm', faktura: 0, b2b: 0, helsebygget: 1, helsebygget_rabatt: 40 },
+}, slett_brukere: true });
 t = await inspiser();
 const sc = t.settings_json.kundegruppe_config;
-sjekk('/settings: formen frontenden leser', JSON.stringify(sc['14']) === JSON.stringify({ faktura: 1, b2b: 1, helsebygget: 0, helsebygget_rabatt: 0 }) && JSON.stringify(sc['4']) === JSON.stringify({ faktura: 0, b2b: 0, helsebygget: 1, helsebygget_rabatt: 40 }), sc);
+sjekk('/settings: de gamle feltene for gruppe 14', sc['14']?.faktura === 1 && sc['14']?.b2b === 1 && sc['14']?.helsebygget === 0 && sc['14']?.helsebygget_rabatt === 0, sc['14']);
+sjekk('/settings: Helsebygget-gruppen (4) er fortsatt Helsebygget', sc['4']?.helsebygget === 1 && sc['4']?.gjelder === 'helsebygget' && sc['4']?.faktura === 0, sc['4']);
 sjekk('/settings: ingen gruppenavn (offentlig svar)', !JSON.stringify(sc).includes('Lillestrøm') && !Object.values(sc).some(g => 'navn' in g));
-
-l = await lagre({ butikk_navn: 'Test' });
-sjekk('lagring uten kundegruppe_config[finnes]: tabellen urørt', Object.keys(l.kundegrupper || {}).length === 5, l.kundegrupper);
-l = await lagre({ kundegruppe_config: { finnes: '1', rader: [{ id: '5' }, { id: '6' }] } });
-sjekk('bare tomme rader: lagres som {} (frontenden faller tilbake til miljøet)', l.kundegrupper_raa === '{}', l.kundegrupper_raa);
+let l2 = await lagre({ butikk_navn: 'Test' });
+sjekk('lagring uten kundegrupper[finnes]: den gamle tabellen urørt', Object.keys(l2.kundegrupper || {}).length === 2, l2.kundegrupper);
+await klargjor({ kundegrupper: null });
 t = await inspiser();
-sjekk('/settings: tom tabell er {}', t.kundegruppe_config_raa === '{}', t.kundegruppe_config_raa);
+sjekk('/settings: uten tabell er den {}', t.kundegruppe_config_raa === '{}', t.kundegruppe_config_raa);
 
 // ── Søknader ────────────────────────────────────────────────────────────────
 console.log('\nSøknader');
@@ -174,14 +158,7 @@ sjekk('søk uten treff', /Aktive B2B-kunder \(0\)/.test(html) && kunderDel(html)
 html = await side('&b2b_sok=' + encodeURIComponent('"><img src=x>'));
 sjekk('søkeordet escapes', !html.includes('"><img src=x>'));
 
-// ── Kundegruppe-tabellen i admin ────────────────────────────────────────────
-console.log('\nKundegruppe-tabellen i admin');
-await klargjor({ kundegrupper: { '14': { navn: 'Bedriftskunder', faktura: 1, b2b: 1, helsebygget: 0, helsebygget_rabatt: 0 } } });
 html = await side();
-const gruppeDel = html.slice(html.indexOf('id="b2b-kundegrupper"'));
-const idVerdier = [...gruppeDel.split('<template')[0].matchAll(/name="kundegruppe_config\[rader\]\[(\d+)\]\[id\]" value="([^"]*)"/g)].map(x => x[2]);
-sjekk('lagrede grupper først, så gruppene kundene har', JSON.stringify(idVerdier) === JSON.stringify(['14', '3']), idVerdier);
-sjekk('advarselen om at frontenden bytter kilde vises', gruppeDel.includes('bare denne tabellen'));
 
 // ── admin.js i jsdom ────────────────────────────────────────────────────────
 console.log('\nadmin.js i jsdom');
@@ -195,14 +172,16 @@ w.eval(readFileSync(ADMIN_JS, 'utf8'));
 await new Promise(r => w.jQuery(r));
 const d = w.document;
 sjekk('#b2b i adressen åpner B2B-fanen', d.querySelector('#tab-b2b').classList.contains('active') && d.querySelector('.amendo-tab[data-tab=b2b]').classList.contains('active') && !d.querySelector('#tab-butikk').classList.contains('active'));
-const rader = () => [...d.querySelectorAll('.kundegruppe-liste .kundegruppe-rad')];
-d.querySelector('#legg-til-kundegruppe').click();
-const ny = rader().at(-1);
-sjekk('+ Legg til: ny tom rad med eget indeksnavn', rader().length === 3 && ny.querySelector('input[name$="[id]"]').name === 'kundegruppe_config[rader][2][id]' && ny.querySelector('input[name$="[id]"]').value === '', rader().length);
-d.querySelector('#legg-til-kundegruppe').click();
-sjekk('to nye rader deler ikke navn', new Set(rader().map(r => r.querySelector('input[name$="[id]"]').name)).size === rader().length);
-rader()[0].querySelector('.kundegruppe-fjern').click();
-sjekk('Fjern tar bort raden', rader().length === 3 && rader()[0].querySelector('input[name$="[id]"]').value === '3');
+const synlig = navn => d.querySelector(`[data-under-panel="${navn}"]`)?.classList.contains('active');
+sjekk('B2B: underfanen Bedrifter vises først', synlig('bedrifter') && !synlig('kundegrupper') && !synlig('helsebygget'));
+d.querySelector('.amendo-undertab[data-under="helsebygget"]').click();
+sjekk('klikk på Helsebygget: bare den underfanen vises', synlig('helsebygget') && !synlig('bedrifter'));
+const dom2 = new JSDOM(html, { url: 'http://localhost/wp-admin/admin.php?page=amendo-settings#b2b-kundegrupper', runScripts: 'outside-only' });
+dom2.window.eval(readFileSync(JQUERY, 'utf8'));
+dom2.window.eval('window.jQuery = jQuery.noConflict(true);');
+dom2.window.eval(readFileSync(ADMIN_JS, 'utf8'));
+await new Promise(r => dom2.window.jQuery(r));
+sjekk('#b2b-kundegrupper i adressen åpner B2B → Kundegrupper', dom2.window.document.querySelector('#tab-b2b').classList.contains('active') && dom2.window.document.querySelector('[data-under-panel="kundegrupper"]').classList.contains('active'));
 const knapp = d.querySelector('.b2b-bekreft');
 if (knapp) {
   const ev = new w.MouseEvent('click', { bubbles: true, cancelable: true });

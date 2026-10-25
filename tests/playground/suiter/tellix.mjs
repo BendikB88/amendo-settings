@@ -1,6 +1,7 @@
-// 1.4.14 punkt 1–3: kundegrupper fra Tellix (via amendo-core), Helsebygget-
-// gruppene og rutene rabatt/kunde og rabatt/telefon. Mot stubben i
-// mu/tellix-stub.php. Se includes/moduler/b2b-tellix.php.
+// 1.4.14 punkt 1–3: kundegrupper fra Tellix (via amendo-core) og rutene
+// rabatt/kunde og rabatt/telefon. Mot stubben i mu/tellix-stub.php. Se
+// includes/moduler/b2b-tellix.php. Tabellen i B2B → Kundegrupper og hvor
+// rabatten gjelder (1.4.17): suiten `kundegrupper`.
 //
 // ⚠ Moduler og stubben lastes når pluginen lastes: tilstanden settes i ett
 // kall og sjekkes i det neste.
@@ -49,7 +50,7 @@ const KUNDER = [
 const HELSEBYGGET = { 4: 40, 5: 40, 6: 40, 7: 40, 19: 50 };
 
 await opt({ amendo_kasse_secret: SECRET });
-await klargjor({ moduler: ['b2b'], tellix: '1', grupper: GRUPPER, kunder: KUNDER, helsebygget: HELSEBYGGET, sov: null, kast: null, api_feil: null, side: null, store_groups: null, liste_slett: true, nullstill: true });
+await klargjor({ moduler: ['b2b'], tellix: '1', grupper: GRUPPER, kunder: KUNDER, helsebygget: HELSEBYGGET, sov: null, kast: null, api_feil: null, side: null, store_groups: null, kundegrupper: null, kundegrupper_ny: null, faktura: null, liste_slett: true, nullstill: true });
 // NAV-ansatt som amendo-core aldri oppdaterte: står med 0 og en gammel kunde-ID.
 await bruker('bedrift@example.com', { billing_phone: '411 28 080', _tellixGroupId: '0', _tellixCustomerId: 'GAMMEL' });
 await bruker('nav@example.com', { billing_phone: '90000001' });
@@ -254,70 +255,37 @@ await klargjor({ store_groups: { 1: '0', 2: '0', 3: '0', 4: 'helsebygget', 5: 'h
 r = await kunde('nav@example.com');
 sjekk('amendo-store-groups alene setter ikke opp lista: fortsatt 503 (1.4.15)', r.status === 503, [r.status, r.json]);
 
-let html = await side('admin');
-sjekk('feltet forhåndsutfylt med BARE gruppe-ID-ene (4–7), uten sats', /name="helsebygget_grupper\[verdi\]" value="4:, 5:, 6:, 7:"/.test(html), html.match(/name="helsebygget_grupper\[verdi\]" value="[^"]*"/)?.[0]);
-let l = await lagre({ helsebygget_grupper: { finnes: '1', verdi: '4:, 5:, 6:, 7:' } });
-sjekk('lagring av forslaget uten satser: avvist, ingenting lagret', l.helsebygget === null, l.helsebygget);
-html = await side('admin');
-sjekk('… fanen sier hvorfor, og beholder det som ble skrevet', html.includes('amendo-helsebygget-avvist') && /value="4:, 5:, 6:, 7:"/.test(html));
-l = await lagre({ helsebygget_grupper: { finnes: '1', verdi: '4:40, 5:40, 6:, 7:40' } });
-sjekk('én gruppe uten sats: hele lagringen avvist', l.helsebygget === null, l.helsebygget);
-l = await lagre({ helsebygget_grupper: { finnes: '1', verdi: '4:40, 5:40, 6:40, 7:40, 19:50, 8:150' } });
-sjekk('alle med sats: lagret {gruppe_id: prosent}, kappet til 100', JSON.stringify(JSON.parse(l.helsebygget)) === JSON.stringify({ 4: 40, 5: 40, 6: 40, 7: 40, 8: 100, 19: 50 }), l.helsebygget);
-html = await side('admin');
-sjekk('lagret liste vises med satsene (et tidligere avslag er glemt)', /name="helsebygget_grupper\[verdi\]" value="4:40, 5:40, 6:40, 7:40, 8:100, 19:50"/.test(html) && !html.includes('amendo-helsebygget-avvist'));
-l = await lagre({ helsebygget_grupper: { finnes: '1', verdi: '4:40, x:9' } });
-sjekk('noe som ikke kan tolkes: avvist, lista uendret', JSON.parse(l.helsebygget)['19'] === 50, l.helsebygget);
-html = await side('admin');
-sjekk('… og avslaget vises én gang', html.includes('amendo-helsebygget-avvist') && html.includes('x:9'));
-await klargjor({ helsebygget: { 4: 0, 5: 0, 6: 0, 7: 0 } });
-html = await side('admin');
-sjekk('lista fra garcon.no ({"4":0,…}): advarsel om 0 %', html.includes('amendo-helsebygget-null') && html.includes('Gruppe 4, 5, 6, 7 har 0 %'));
-await klargjor({ helsebygget: { 4: 40, 5: 40, 6: 40, 7: 40, 8: 100, 19: 50 } });
-html = await side('shop_manager');
-sjekk('butikkadministrator ser ikke feltet', !html.includes('helsebygget_grupper[verdi]') && html.includes('id="b2b-tellix"'));
-l = await lagre({ helsebygget_grupper: { finnes: '1', verdi: '14:99' } }, 'shop_manager');
-sjekk('… og kan ikke lagre det', JSON.stringify(JSON.parse(l.helsebygget)) === JSON.stringify({ 4: 40, 5: 40, 6: 40, 7: 40, 8: 100, 19: 50 }), l.helsebygget);
-l = await lagre({ butikk_navn: 'Test' });
-sjekk('lagring uten feltet: urørt', JSON.parse(l.helsebygget)['19'] === 50, l.helsebygget);
+// Lista lagret igjen: rabattrutene svarer. Helsebygget-lista, satsene og
+// admin-tabellen (1.4.17): suiten `kundegrupper`.
+await klargjor({ helsebygget: HELSEBYGGET, store_groups: null });
 r = await kunde('nav@example.com');
-sjekk('etter lagring: gruppe 4 er Helsebygget igjen', r.json?.helsebygget?.prosent === 40 && r.json?.nettbutikk === null, r.json);
+sjekk('lista lagret: gruppe 4 er Helsebygget igjen', r.status === 200 && r.json?.helsebygget?.prosent === 40 && r.json?.nettbutikk === null, r.json);
 
-// ── To kilder for Helsebygget ───────────────────────────────────────────────
-console.log('\nTo kilder: Helsebygget-lista vs. amendo_kundegruppe_config');
-const KG = { 14: { navn: 'Bedriftskunder', faktura: 1, b2b: 1, helsebygget: 0, helsebygget_rabatt: 0 }, 4: { navn: 'NAV', faktura: 0, b2b: 0, helsebygget: 1, helsebygget_rabatt: 30 } };
-await klargjor({ kundegrupper: KG });
-const settings = async () => (await fetch(B + '/amendo-settings/v1/settings')).json();
-let kg = (await settings()).kundegruppe_config;
-sjekk('lista lagret: Helsebygget og sats fra lista (4 → 40, ikke 30)', kg['4']?.helsebygget === 1 && kg['4']?.helsebygget_rabatt === 40, kg);
-sjekk('… grupper bare i lista kommer med (19 → 50)', kg['19']?.helsebygget === 1 && kg['19']?.helsebygget_rabatt === 50 && kg['19']?.faktura === 0, kg['19']);
-sjekk('… og grupper som ikke står i lista, har ikke Helsebygget', kg['14']?.helsebygget === 0 && kg['14']?.faktura === 1, kg['14']);
-html = await side('admin');
-const kgDel = html.slice(html.indexOf('id="b2b-kundegrupper"'), html.indexOf('id="b2b-tellix"'));
-sjekk('admin: merknad om at lista gjelder', kgDel.includes('amendo-helsebygget-merknad'));
-sjekk('admin: Helsebygget-kolonnene skrivebeskyttet (disabled, ikke sendt)', !/\[helsebygget\]"|\[helsebygget_rabatt\]"/.test(kgDel) && (kgDel.match(/kundegruppe-laast/g) || []).length >= 4, (kgDel.match(/kundegruppe-laast/g) || []).length);
-l = await lagre({ kundegruppe_config: { finnes: '1', rader: [{ id: '14', faktura: '1', b2b: '1', helsebygget: '1', helsebygget_rabatt: '99' }, { id: '4', helsebygget: '' }] } });
-sjekk('lagring: Helsebygget-feltene fra skjemaet ignoreres, det lagrede står', l.kundegrupper?.['14']?.helsebygget === 0 && l.kundegrupper?.['4']?.helsebygget === 1 && l.kundegrupper?.['4']?.helsebygget_rabatt === 30, l.kundegrupper);
-await klargjor({ kundegrupper: {} });
-kg = (await settings()).kundegruppe_config;
-sjekk('tom tabell forblir {} selv med lista (frontenden bytter ikke kilde)', kg && Object.keys(kg).length === 0, kg);
-await klargjor({ helsebygget: null, store_groups: { 4: 'helsebygget' }, kundegrupper: KG });
-kg = (await settings()).kundegruppe_config;
-sjekk('uten lagret liste (bare amendo-store-groups): som før — 4 → 30, ingen 19', kg['4']?.helsebygget_rabatt === 30 && !('19' in kg), kg);
-html = await side('admin');
-sjekk('… og ingen merknad, kolonnene kan redigeres', !html.includes('amendo-helsebygget-merknad') && /kundegruppe_config\[rader\]\[\d+\]\[helsebygget\]/.test(html));
-await klargjor({ helsebygget: { 4: 40, 5: 40, 6: 40, 7: 40, 8: 100, 19: 50 }, store_groups: null, kundegrupper: null });
+// ── E-post uten hensyn til store/små bokstaver og mellomrom (1.4.17) ────────
+console.log('\nE-post: store og små bokstaver og mellomrom');
+// Kk@eidel.no-saken fra garcon.no: Tellix og WordPress skrev e-posten ulikt,
+// og kunden ble ikke koblet. Ingen telefon, så bare e-posten kan gi treffet.
+await klargjor({ kunder: [...KUNDER,
+  { id: 'T20', uuid: 'U20', groupId: 14, email: 'Kk@eidel.no', phone: '', name: 'K K' },
+  { id: 'T21', uuid: 'U21', groupId: 1, email: ' Ola.NORDMANN@Eidel.no ', phone: '', name: 'Ola N' },
+  { id: 'T22', uuid: 'U22', groupId: 14, email: 'kari @eidel.no', phone: '', name: 'Kari' },
+], liste_slett: true });
+await bruker('kk@eidel.no', {});
+await bruker('Ola.Nordmann@eidel.no', {});
+await bruker('kari@eidel.no', {});
+await bruker('kk2@eidel.no', {});
+r = await kunde('kk@eidel.no');
+m = await brukermeta('kk@eidel.no');
+sjekk('Tellix «Kk@eidel.no», WordPress «kk@eidel.no»: koblet, gruppe 14', r.json?.gruppe_id === 14 && m.meta._tellixCustomerId === 'T20' && m.meta._tellixGroupId === '14', [r.json, m.meta]);
+r = await kunde('Ola.Nordmann@eidel.no');
+sjekk('store bokstaver i WordPress, mellomrom og hardt mellomrom i Tellix: gruppe 1', r.json?.gruppe_id === 1, r.json);
+r = await kunde('kari@eidel.no');
+sjekk('mellomrom inne i e-posten i Tellix: gruppe 14', r.json?.gruppe_id === 14, r.json);
+r = await kunde('kk2@eidel.no');
+sjekk('en annen e-post som ligner: ikke treff', r.status === 200 && r.json?.gruppe_id === null, r.json);
+await klargjor({ kunder: KUNDER, liste_slett: true });
 
-// ── Admin: kundegruppene skrivebeskyttet ────────────────────────────────────
-console.log('\nAdmin: Kundegrupper fra Tellix');
-const tellixDel = h => h.slice(h.indexOf('id="b2b-tellix"'), h.indexOf('id="b2b-helsebygget"') > 0 ? h.indexOf('id="b2b-helsebygget"') : undefined);
-html = tellixDel(await side('admin'));
-sjekk('gruppene med navn og sats', html.includes('Bedriftskunder') && html.includes('10 %') && html.includes('NAV Lillestrøm'));
-sjekk('kategorisatsen med kategorinavn', html.includes('Ringer: 15 %'));
-sjekk('inaktiv gruppe vises ikke', !html.includes('Faktura 25'));
-sjekk('Helsebygget-gruppene merket', html.includes('Bare Helsebygget (40 %)') && html.includes('Bare Helsebygget (50 %)'));
-sjekk('skrivebeskyttet: ingen felter', !/<input|<select|<textarea/.test(html));
-
+let html;
 console.log('\nAdvarsel: Tellix-lista kan være avkortet (1.4.15)');
 await klargjor({ sync_size: '2500', core_cache: 2500, tellix_cache: null });
 html = await side('admin');
