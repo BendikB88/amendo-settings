@@ -356,6 +356,60 @@ m = await brukermeta('gammel-kopi@amendo.no');
 sjekk('kopi fra 1.4.19 (format 2) med gruppe_id 0: Tellix er sannheten, 0', r.json?.gruppe_id === null && m.meta._tellixGroupId === '0', [r.json, m.meta]);
 await klargjor({ kunder: KUNDER, liste_slett: true });
 
+// ── Samme telefonnummer på flere Tellix-kunder (1.4.20) ─────────────────────
+console.log('\nSamme telefonnummer på flere Tellix-kunder');
+// Garçon-økta: amendo_tellix_let() tok den første kunden med nummeret, uten
+// å se på gruppen. Kunden uten gruppe står FØRST i lista i hvert tilfelle.
+// Gruppe 4 og 19 er Bare Helsebygget (HELSEBYGGET), 14 er Nettbutikken.
+await klargjor({ kunder: [...KUNDER,
+  { id: 'D1a', uuid: 'UD1a', groupId: 0, email: '', phone: '+4793001001', name: 'Uten Gruppe' },
+  { id: 'D1b', uuid: 'UD1b', groupId: 4, email: '', phone: '93 00 10 01', name: 'Nav Ansatt' },
+  { id: 'D2a', uuid: 'UD2a', groupId: 14, email: 'd2a@eidel.no', phone: '+4793001002', name: 'Bedrift Ansatt' },
+  { id: 'D2b', uuid: 'UD2b', groupId: 4, email: '', phone: '+4793001002', name: 'Nav Ansatt' },
+  { id: 'D3a', uuid: 'UD3a', groupId: 4, email: '', phone: '+4793001003', name: 'A' },
+  { id: 'D3b', uuid: 'UD3b', groupId: 19, email: '', phone: '+4793001003', name: 'B' },
+  { id: 'D4a', uuid: 'UD4a', groupId: 0, email: '', phone: '+4793001004', name: 'C' },
+  { id: 'D4b', uuid: 'UD4b', groupId: null, email: '', phone: '+4793001004', name: 'D' },
+  { id: 'D5a', uuid: 'UD5a', groupId: 0, email: '', phone: '+4793001005', name: 'E' },
+  { id: 'D5b', uuid: 'UD5b', groupId: 14, email: '', phone: '+4793001005', name: 'F' },
+  { id: 'D5c', uuid: 'UD5c', groupId: 14, email: '', phone: '+4793001005', name: 'G' },
+], liste_slett: true });
+r = await telefon('93001001');
+sjekk('gruppe 0 og 4 på nummeret: gruppe 4 (Helsebygget), ikke den første', r.json?.gruppe_id === 4 && r.json?.helsebygget?.prosent === 40 && r.json?.fornavn === 'Nav', r.json);
+r = await telefon('93001002');
+sjekk('gruppe 14 og 4: rabatt/telefon foretrekker Helsebygget (4)', r.json?.gruppe_id === 4 && r.json?.helsebygget?.prosent === 40, r.json);
+// Reserven fra WordPress skal ikke slå inn når Tellix har flere kunder.
+await bruker('d3-wp@eidel.no', { billing_phone: '93001003', _tellixGroupId: '14' });
+r = await telefon('93001003');
+sjekk('gruppe 4 og 19 (begge Helsebygget): ingen gruppe, ingen navn, ikke WordPress-reserven', r.status === 200 && r.json?.gruppe_id === null && r.json?.fornavn === null && r.json?.epost === null, r.json);
+r = await telefon('93001004');
+sjekk('ingen av kundene har gruppe: ingen gruppe og ingen navn', r.status === 200 && r.json?.gruppe_id === null && r.json?.fornavn === null, r.json);
+r = await telefon('93001005');
+sjekk('0, 14 og 14: gruppe 14', r.json?.gruppe_id === 14, r.json);
+
+// rabatt/kunde: Helsebygget foretrekkes ikke. Ulike grupper = ingen gruppe og
+// ingen kobling; e-posten kan avgjøre; ID-koblingen er som før.
+await bruker('d2-tvetydig@eidel.no', { billing_phone: '93001002' });
+r = await kunde('d2-tvetydig@eidel.no');
+m = await brukermeta('d2-tvetydig@eidel.no');
+sjekk('rabatt/kunde, gruppe 14 og 4 på nummeret: ingen gruppe, ikke koblet', r.json?.gruppe_id === null && !m.meta._tellixCustomerId && !m.meta._tellixGroupId, [r.json, m.meta]);
+await bruker('d2-lagret@eidel.no', { billing_phone: '93001002', _tellixGroupId: '19' });
+r = await kunde('d2-lagret@eidel.no');
+m = await brukermeta('d2-lagret@eidel.no');
+sjekk('… med lagret gruppe 19: den står (som når Tellix ikke finner kunden)', r.json?.gruppe_id === 19 && m.meta._tellixGroupId === '19', [r.json, m.meta]);
+await bruker('d2a@eidel.no', { billing_phone: '93001002' });
+r = await kunde('d2a@eidel.no');
+m = await brukermeta('d2a@eidel.no');
+sjekk('… e-posten avgjør: gruppe 14, koblet til D2a', r.json?.gruppe_id === 14 && m.meta._tellixCustomerId === 'D2a', [r.json, m.meta]);
+await bruker('d2-koblet@eidel.no', { billing_phone: '93001002', _tellixCustomerId: 'D2b' });
+r = await kunde('d2-koblet@eidel.no');
+sjekk('… koblet på Tellix-ID (D2b): gruppe 4, som før', r.json?.gruppe_id === 4, r.json);
+await bruker('d1@eidel.no', { billing_phone: '93001001' });
+r = await kunde('d1@eidel.no');
+m = await brukermeta('d1@eidel.no');
+sjekk('rabatt/kunde, gruppe 0 og 4: gruppe 4, koblet til D1b', r.json?.gruppe_id === 4 && m.meta._tellixCustomerId === 'D1b', [r.json, m.meta]);
+await klargjor({ kunder: KUNDER, liste_slett: true });
+
 let html;
 console.log('\nAdvarsel: Tellix-lista kan være avkortet (1.4.15)');
 await klargjor({ sync_size: '2500', core_cache: 2500, tellix_cache: null });

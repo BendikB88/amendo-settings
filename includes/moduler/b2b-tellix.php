@@ -298,7 +298,17 @@ function amendo_tellix_liste_hent() {
     return true;
 }
 
-/** Leter i kopien. Kobling (ID/UUID) foran telefon foran e-post. */
+/**
+ * Leter i kopien. Kobling (ID/UUID) foran telefon foran e-post.
+ *
+ * ⚠⚠ Samme telefonnummer kan stå på flere Tellix-kunder (1.4.20). Før tok vi
+ * den første, uten å se på gruppen: et Helsebygget-nummer som også stod på en
+ * kunde uten gruppe, kunne gi 0 % rabatt. Nå samles alle treffene på telefon,
+ * og amendo_tellix_velg() avgjør. Kan den ikke avgjøre, prøves e-posten, og
+ * ellers er svaret 'via' => 'tvetydig' uten kunde: ingen gruppe, og brukeren
+ * kobles ikke til en tilfeldig av dem. Oppslag på ID og UUID er som før.
+ * `helsebygget_foran` i $s: se amendo_tellix_velg().
+ */
 function amendo_tellix_let(array $liste, array $s) {
     $id    = (string) ($s['id'] ?? '');
     $uuid  = (string) ($s['uuid'] ?? '');
@@ -312,19 +322,51 @@ function amendo_tellix_let(array $liste, array $s) {
             }
         }
     }
+    $treff = [];
     foreach ($tlf as $t) {
-        foreach ($liste as $k) if ($k['telefon'] !== '' && $k['telefon'] === $t) return ['kunde' => $k, 'via' => 'kontakt'];
+        foreach ($liste as $k) if ($k['telefon'] !== '' && $k['telefon'] === $t) $treff[$k['id'] . '|' . $k['uuid']] = $k;
+    }
+    if ($treff) {
+        $k = amendo_tellix_velg(array_values($treff), !empty($s['helsebygget_foran']));
+        if ($k) return ['kunde' => $k, 'via' => 'kontakt'];
     }
     if ($epost !== '') {
         // Renset også her: kopien kan være lagret av 1.4.16, med bare trim().
         foreach ($liste as $k) if ($k['epost'] !== '' && amendo_tellix_epost($k['epost']) === $epost) return ['kunde' => $k, 'via' => 'kontakt'];
+    }
+    return $treff ? ['kunde' => null, 'via' => 'tvetydig'] : null;
+}
+
+/**
+ * Ett av treffene på telefon, eller null når det ikke kan avgjøres:
+ *   - ett treff: det, som før;
+ *   - bare ett av dem har gruppe over 0 (eller alle med gruppe har samme): det;
+ *   - ulike grupper: med $helsebygget_foran (rabatt/telefon, Helsebygget-
+ *     innloggingen) den ene gruppen med «Hvor gjelder rabatten» = Bare
+ *     Helsebygget; ellers null — ingen gruppe, som amendo_tellix_gruppe_fra_wp();
+ *   - ingen av dem har gruppe: null.
+ */
+function amendo_tellix_velg(array $treff, $helsebygget_foran) {
+    if (count($treff) === 1) return $treff[0];
+    $grupper = [];
+    foreach ($treff as $k) {
+        $g = (int) ($k['gruppe_id'] ?? 0);
+        if ($g > 0 && !isset($grupper[$g])) $grupper[$g] = $k;
+    }
+    if (count($grupper) === 1) return reset($grupper);
+    if ($grupper && $helsebygget_foran && function_exists('amendo_kg_innstilling')) {
+        $helse = [];
+        foreach ($grupper as $g => $k) if (amendo_kg_innstilling($g)['gjelder'] === 'helsebygget') $helse[] = $k;
+        if (count($helse) === 1) return $helse[0];
     }
     return null;
 }
 
 /**
  * Finn Tellix-kunden. $s: id, uuid, epost, telefoner (+47XXXXXXXX).
- * Returnerer ['kunde' => [...], 'via' => 'kobling'|'kontakt'] eller null.
+ * Returnerer ['kunde' => [...], 'via' => 'kobling'|'kontakt'], ['kunde' =>
+ * null, 'via' => 'tvetydig'] (flere kunder på nummeret, se amendo_tellix_let)
+ * eller null.
  */
 function amendo_tellix_finn(array $s) {
     if (!amendo_tellix_api_tilgjengelig()) return null;
@@ -357,8 +399,9 @@ function amendo_tellix_finn(array $s) {
  * Er treffet bare på telefon eller e-post, skrives aldri en gruppe over 0 ned
  * til 0: `_tellixGroupId` kan være satt for hånd. Kunde-ID og UUID skrives
  * likevel, så kunden er koblet neste gang.
- * Finnes ikke kunden i Tellix, gjelder `_tellixGroupId` på brukeren hvis den
- * er over 0 (1.4.15).
+ * Finnes ikke kunden i Tellix, eller er telefonnummeret tvetydig (1.4.20),
+ * gjelder `_tellixGroupId` på brukeren hvis den er over 0 (1.4.15), og
+ * ingenting skrives.
  */
 function amendo_tellix_oppdater_bruker($bruker_id) {
     $u = get_userdata((int) $bruker_id);
@@ -372,7 +415,7 @@ function amendo_tellix_oppdater_bruker($bruker_id) {
             amendo_tellix_telefon(get_user_meta($u->ID, '_amendo_otp_match', true)),
         ]))),
     ]);
-    if ($treff) {
+    if ($treff && $treff['kunde']) {
         $k = $treff['kunde'];
         if ($k['id'] !== '') update_user_meta($u->ID, '_tellixCustomerId', $k['id']);
         if ($k['uuid'] !== '') update_user_meta($u->ID, '_tellixCustomerUuId', $k['uuid']);
@@ -517,9 +560,12 @@ function amendo_tellix_rest_telefon(WP_REST_Request $req) {
     if ($feil) return $feil;
     // Tellix først. Finner ikke Tellix nummeret, eller har kunden ingen
     // gruppe: WordPress-brukerne med samme nummer (se amendo_tellix_gruppe_fra_wp).
-    $treff = amendo_tellix_finn(['telefoner' => [$tlf]]);
+    // Flere Tellix-kunder med nummeret og ulike grupper (1.4.20): Helsebygget-
+    // gruppen foran, ellers ingen gruppe — og da heller ikke WordPress-reserven.
+    $treff = amendo_tellix_finn(['telefoner' => [$tlf], 'helsebygget_foran' => true]);
     $kunde = $treff ? $treff['kunde'] : null;
-    $gruppe = $kunde && $kunde['gruppe_id'] > 0 ? $kunde['gruppe_id'] : amendo_tellix_gruppe_fra_wp($tlf);
+    if ($treff && $treff['via'] === 'tvetydig') $gruppe = 0;
+    else $gruppe = $kunde && $kunde['gruppe_id'] > 0 ? $kunde['gruppe_id'] : amendo_tellix_gruppe_fra_wp($tlf);
     // ⚠⚠ FORUTSETNING for fornavn, etternavn og epost (1.4.16): ruten kalles
     // BARE fra frontendens server, etter at kunden har bekreftet nummeret med
     // en SMS-kode (Helsebygget-innloggingen). Da er det kundens egne
