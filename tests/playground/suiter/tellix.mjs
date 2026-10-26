@@ -285,6 +285,77 @@ r = await kunde('kk2@eidel.no');
 sjekk('en annen e-post som ligner: ikke treff', r.status === 200 && r.json?.gruppe_id === null, r.json);
 await klargjor({ kunder: KUNDER, liste_slett: true });
 
+// ── Gruppefeltet: customerGroupId og groupId (1.4.19) ───────────────────────
+console.log('\nGruppefeltet: customerGroupId (Tellix) og groupId (amendo-core)');
+// garcon.no, 1.4.17: bruker 3492 (testbedrift@amendo.no), koblet til
+// Tellix-kunde 2255 med gruppe 1, fikk gruppe_id null og _tellixGroupId = 0.
+// Kunde 2255 er et ekte svar fra v2/customer/list (customerGroupId).
+const TELLIX_2255 = {
+  customerId: 2255, name: 'Testbedrift AS', email: 'testbedrift@amendo.no', phoneNumber: '',
+  customerGroupId: 1, customerUuid: '6f1c2a3e-2255-4b7a-9c1d-0a1b2c3d4e5f',
+  address: 'Testveien 1', zip: '0150', location: 'Oslo', country: 'NO',
+  isActive: true, isDeleted: false,
+};
+await klargjor({ kunder: [...KUNDER,
+  { raa: TELLIX_2255 },
+  { id: '2256', uuid: 'U2256', groupId: 1, email: 'core@amendo.no', phone: '', form: 'core' },
+  { id: '2257', uuid: 'U2257', groupId: 4, email: 'uten@amendo.no', phone: '', form: 'uten' },
+  { id: '2258', uuid: 'U2258', groupId: null, email: 'tom@amendo.no', phone: '' },
+  { id: '2259', uuid: 'U2259', groupId: 0, email: 'null@amendo.no', phone: '' },
+  { id: '2260', uuid: 'U2260', groupId: '', email: 'coretom@amendo.no', phone: '', form: 'core' },
+  { id: '2261', uuid: 'U2261', groupId: 4, email: 'kontakt-uten@amendo.no', phone: '', form: 'uten' },
+], liste_slett: true });
+await bruker('testbedrift@amendo.no', { _tellixCustomerId: '2255', _tellixGroupId: '0' });
+await bruker('core@amendo.no', { _tellixCustomerId: '2256', _tellixGroupId: '0' });
+await bruker('uten@amendo.no', { _tellixCustomerId: '2257', _tellixGroupId: '1' });
+await bruker('tom@amendo.no', { _tellixCustomerId: '2258', _tellixGroupId: '1' });
+await bruker('null@amendo.no', { _tellixCustomerId: '2259', _tellixGroupId: '1' });
+await bruker('coretom@amendo.no', { _tellixCustomerId: '2260', _tellixGroupId: '1' });
+await bruker('kontakt-uten@amendo.no', { _tellixGroupId: '1' });
+r = await kunde('testbedrift@amendo.no');
+m = await brukermeta('testbedrift@amendo.no');
+sjekk('ekte v2/customer/list (customerGroupId 1), koblet: gruppe 1 og _tellixGroupId 1', r.json?.gruppe_id === 1 && m.meta._tellixGroupId === '1' && m.meta._tellixCustomerUuId === TELLIX_2255.customerUuid, [r.json, m.meta]);
+r = await kunde('core@amendo.no');
+m = await brukermeta('core@amendo.no');
+sjekk('amendo-core sin form (groupId 1), koblet: gruppe 1', r.json?.gruppe_id === 1 && m.meta._tellixGroupId === '1', [r.json, m.meta]);
+r = await kunde('uten@amendo.no');
+m = await brukermeta('uten@amendo.no');
+sjekk('gruppefeltet mangler, koblet: den lagrede gruppen 1 gjelder og står', r.json?.gruppe_id === 1 && m.meta._tellixGroupId === '1', [r.json, m.meta]);
+r = await kunde('kontakt-uten@amendo.no');
+m = await brukermeta('kontakt-uten@amendo.no');
+sjekk('gruppefeltet mangler, treff på e-post: 1 står, kunden kobles', r.json?.gruppe_id === 1 && m.meta._tellixGroupId === '1' && m.meta._tellixCustomerId === '2261', [r.json, m.meta]);
+r = await kunde('tom@amendo.no');
+m = await brukermeta('tom@amendo.no');
+sjekk('customerGroupId: null (eksplisitt tom), koblet: 0 (Tellix er sannheten)', r.json?.gruppe_id === null && m.meta._tellixGroupId === '0', [r.json, m.meta]);
+r = await kunde('null@amendo.no');
+m = await brukermeta('null@amendo.no');
+sjekk('customerGroupId: 0, koblet: 0', r.json?.gruppe_id === null && m.meta._tellixGroupId === '0', [r.json, m.meta]);
+r = await kunde('coretom@amendo.no');
+m = await brukermeta('coretom@amendo.no');
+sjekk('groupId: "" (eksplisitt tom), koblet: 0', r.json?.gruppe_id === null && m.meta._tellixGroupId === '0', [r.json, m.meta]);
+
+// Kopi lagret av 1.4.17 (uten format): 0 kan bety «feltet manglet». Den
+// skriver aldri over en gruppe over 0, men en gruppe over 0 i kopien gjelder.
+await bruker('gammel-kopi@amendo.no', { _tellixCustomerId: '2255', _tellixGroupId: '1' });
+await bruker('gammel-kopi4@amendo.no', { _tellixCustomerId: '2262', _tellixGroupId: '0' });
+await get('/amendo-test/v1/v1419-liste', { kunder: [
+  { id: '2255', uuid: 'U-gammel', gruppe_id: 0, navn: 'Testbedrift AS', epost: 'testbedrift@amendo.no', telefon: '' },
+  { id: '2262', uuid: 'U2262', gruppe_id: 4, navn: 'NAV', epost: 'gammel-kopi4@amendo.no', telefon: '' },
+] });
+r = await kunde('gammel-kopi@amendo.no');
+m = await brukermeta('gammel-kopi@amendo.no');
+sjekk('kopi fra 1.4.17 med gruppe_id 0: _tellixGroupId 1 står', r.json?.gruppe_id === 1 && m.meta._tellixGroupId === '1', [r.json, m.meta]);
+r = await kunde('gammel-kopi4@amendo.no');
+m = await brukermeta('gammel-kopi4@amendo.no');
+sjekk('kopi fra 1.4.17 med gruppe_id 4: gruppe 4', r.json?.gruppe_id === 4 && m.meta._tellixGroupId === '4', [r.json, m.meta]);
+await get('/amendo-test/v1/v1419-liste', { format: 2, kunder: [
+  { id: '2255', uuid: 'U-ny', gruppe_id: 0, navn: 'Testbedrift AS', epost: 'testbedrift@amendo.no', telefon: '' },
+] });
+r = await kunde('gammel-kopi@amendo.no');
+m = await brukermeta('gammel-kopi@amendo.no');
+sjekk('kopi fra 1.4.19 (format 2) med gruppe_id 0: Tellix er sannheten, 0', r.json?.gruppe_id === null && m.meta._tellixGroupId === '0', [r.json, m.meta]);
+await klargjor({ kunder: KUNDER, liste_slett: true });
+
 let html;
 console.log('\nAdvarsel: Tellix-lista kan være avkortet (1.4.15)');
 await klargjor({ sync_size: '2500', core_cache: 2500, tellix_cache: null });

@@ -89,7 +89,12 @@ if (get_option('amendo_test_tellix') === '1' && !class_exists(__NAMESPACE__ . '\
             $side = intdiv((int) $data['offset'], max(1, (int) $data['limit'])) + 1;
             if ((int) get_option('amendo_test_tellix_api_feil', 0) === $side) return (object) ['code' => 500];
             $alle = array_map(function($k) {
-                return (object) [
+                // 1.4.19: `raa` = et kundeobjekt nøyaktig som Tellix svarer;
+                // `form` 'core' = gruppen som `groupId` (amendo-core sin liste),
+                // 'uten' = ingen gruppefelt i det hele tatt.
+                if (isset($k['raa'])) return json_decode(wp_json_encode($k['raa']));
+                $form = $k['form'] ?? 'raa';
+                $o = (object) [
                     'customerId'      => $k['id'],
                     'customerUuid'    => $k['uuid'] ?? '',
                     'customerGroupId' => $k['groupId'] ?? null,
@@ -99,6 +104,9 @@ if (get_option('amendo_test_tellix') === '1' && !class_exists(__NAMESPACE__ . '\
                     'isActive'        => $k['aktiv'] ?? true,
                     'isDeleted'       => $k['slettet'] ?? false,
                 ];
+                if ($form !== 'raa') unset($o->customerGroupId);
+                if ($form === 'core') $o->groupId = $k['groupId'] ?? null;
+                return $o;
             }, json_decode((string) get_option('amendo_test_tellix_kunder', '[]'), true) ?: []);
             return (object) ['code' => 200, 'total_count' => count($alle), 'customers' => array_slice($alle, (int) $data['offset'], (int) $data['limit'])];
         }

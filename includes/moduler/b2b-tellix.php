@@ -200,10 +200,43 @@ function amendo_tellix_logg($melding) {
     if (function_exists('wc_get_logger')) wc_get_logger()->info($melding, ['source' => 'amendo-tellix']);
 }
 
-/** Kopien: ['hentet' => tid, 'kunder' => [...]], eller null. */
+/**
+ * Gruppen til én kunde i Tellix-svaret (1.4.19): int over 0, 0 når et
+ * gruppefelt FINNES og er tomt (null, '', 0), eller null når gruppen ikke er
+ * kjent (feltet mangler eller har en verdi vi ikke forstår).
+ *
+ * ⚠⚠ Det rå svaret fra v2/customer/list har `customerGroupId`, amendo-core sin
+ * liste (get_tellix_customers/search_customers) har `groupId`. Vi leser begge.
+ * På garcon.no (1.4.17) fikk en koblet kunde med gruppe 1 i Tellix
+ * `_tellixGroupId` = 0: et felt som mangler ble lest som «ingen gruppe».
+ * Det er ikke det samme — se amendo_tellix_oppdater_bruker().
+ */
+function amendo_tellix_gruppe_fra_rad($k) {
+    $tomt = false;
+    foreach (['customerGroupId', 'groupId'] as $felt) {
+        if (is_object($k) ? !property_exists($k, $felt) : !(is_array($k) && array_key_exists($felt, $k))) continue;
+        $v = amendo_tellix_felt($k, $felt);
+        if (is_numeric($v) && (int) $v > 0) return (int) $v;
+        if ($v === null || $v === '' || (is_numeric($v) && (int) $v === 0)) $tomt = true;
+    }
+    return $tomt ? 0 : null;
+}
+
+/**
+ * Kopien: ['hentet' => tid, 'kunder' => [...]], eller null.
+ * Kopier fra før 1.4.19 (uten 'format') skrev 0 også når gruppefeltet
+ * manglet. Der er 0 derfor «ukjent» (null), aldri «ingen gruppe».
+ */
 function amendo_tellix_liste_les() {
     $data = get_option('amendo_tellix_kundeliste', null);
-    return is_array($data) && isset($data['hentet'], $data['kunder']) && is_array($data['kunder']) ? $data : null;
+    if (!(is_array($data) && isset($data['hentet'], $data['kunder']) && is_array($data['kunder']))) return null;
+    if ((int) ($data['format'] ?? 0) < 2) {
+        foreach ($data['kunder'] as &$k) {
+            if (is_array($k) && (int) ($k['gruppe_id'] ?? 0) <= 0) $k['gruppe_id'] = null;
+        }
+        unset($k);
+    }
+    return $data;
 }
 
 /**
@@ -252,7 +285,7 @@ function amendo_tellix_liste_hent() {
             $kunder[] = [
                 'id'        => (string) ($k->customerId ?? ''),
                 'uuid'      => (string) ($k->customerUuid ?? ''),
-                'gruppe_id' => is_numeric($k->customerGroupId ?? null) ? (int) $k->customerGroupId : 0,
+                'gruppe_id' => amendo_tellix_gruppe_fra_rad($k),
                 'navn'      => trim((string) ($k->name ?? '')),
                 'epost'     => amendo_tellix_epost($k->email ?? ''),
                 'telefon'   => amendo_tellix_telefon_fra_tellix($k->phoneNumber ?? ''),
@@ -260,7 +293,7 @@ function amendo_tellix_liste_hent() {
         }
         $offset += count($r->customers);
     }
-    update_option('amendo_tellix_kundeliste', ['hentet' => time(), 'kunder' => $kunder], false);
+    update_option('amendo_tellix_kundeliste', ['hentet' => time(), 'format' => 2, 'kunder' => $kunder], false);
     amendo_tellix_logg(sprintf('kundelista hentet: %d kunder, %d sider, %.1f s', count($kunder), $i, microtime(true) - $start));
     return true;
 }
@@ -318,6 +351,9 @@ function amendo_tellix_finn(array $s) {
  * ⚠⚠ Tellix er sannheten for en KOBLET kunde (1.4.16): har brukeren
  * `_tellixCustomerId` eller `_tellixCustomerUuId`, og Tellix har den kunden,
  * gjelder Tellix-gruppen — også når den er tom. Da settes 0.
+ * ⚠⚠ «Tom» betyr at Tellix-svaret HAR et gruppefelt som er tomt (1.4.19).
+ * Mangler feltet (gruppe_id null), skrives ingenting, og den lagrede gruppen
+ * gjelder — se amendo_tellix_gruppe_fra_rad().
  * Er treffet bare på telefon eller e-post, skrives aldri en gruppe over 0 ned
  * til 0: `_tellixGroupId` kan være satt for hånd. Kunde-ID og UUID skrives
  * likevel, så kunden er koblet neste gang.
@@ -340,7 +376,7 @@ function amendo_tellix_oppdater_bruker($bruker_id) {
         $k = $treff['kunde'];
         if ($k['id'] !== '') update_user_meta($u->ID, '_tellixCustomerId', $k['id']);
         if ($k['uuid'] !== '') update_user_meta($u->ID, '_tellixCustomerUuId', $k['uuid']);
-        if ($treff['via'] === 'kobling' || $k['gruppe_id'] > 0) {
+        if ($k['gruppe_id'] !== null && ($treff['via'] === 'kobling' || $k['gruppe_id'] > 0)) {
             update_user_meta($u->ID, '_tellixGroupId', (string) $k['gruppe_id']);
             return $k['gruppe_id'];
         }
