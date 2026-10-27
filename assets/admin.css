@@ -428,6 +428,10 @@
 .amendo-b2b-melding { border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; font-size: 13px; }
 .amendo-b2b-melding-ok { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
 .amendo-b2b-melding-feil { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+.amendo-b2b-melding-advarsel { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+.b2b-tellix-kandidater { margin-top: 8px; font-size: 12px; }
+.b2b-tellix-web label { display: inline-flex; flex-direction: column; gap: 4px; margin: 0 12px 8px 0; font-size: 12px; }
+.b2b-tellix-web input[type=url] { min-width: 260px; }
 @media (max-width: 782px) {
     .amendo-tabell { display: block; overflow-x: auto; }
 }

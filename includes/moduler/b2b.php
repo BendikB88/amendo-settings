@@ -24,6 +24,10 @@
  * 2. AKTIVE B2B-KUNDER: alle med `billing_org_number`, søkbart på org.nr og
  *    firmanavn (`billing_company`).
  *
+ * 3. TELLIX-KOBLING (1.4.22): godkjenning kobler kunden til Tellix-kunden med
+ *    samme org.nr/e-post, eller oppretter den. Feiler Tellix, står
+ *    godkjenningen. Se b2b-tellix-kunder.php.
+ *
  * Kundegrupper (1.4.17): én rad per Tellix-gruppe med rabatt, hvor den
  * gjelder, faktura, bedriftsvisning og levering — se b2b-kundegrupper.php.
  * Erstatter tabellen `amendo_kundegruppe_config` og Helsebygget-lista.
@@ -100,7 +104,16 @@ add_action('admin_post_amendo_b2b_soknad', function() {
     $id   = (int) ($_POST['godkjenn'] ?? $_POST['avvis'] ?? 0);
     $svar = amendo_b2b_behandle($id, $valg);
 
-    wp_redirect(admin_url('admin.php?page=amendo-settings&b2b=' . rawurlencode($svar) . '#b2b'));
+    // Tellix (1.4.22): godkjenningen over er lagret uansett hvordan dette går.
+    // Butikker uten Tellix merker ingenting.
+    $tellix = '';
+    if ($svar === 'godkjent' && amendo_b2b_tellix_i_bruk()) {
+        $gruppe = amendo_b2b_tellix_gruppe_fra_skjema(wp_unslash(((array) ($_POST['gruppe'] ?? []))[$id] ?? ''));
+        $r = amendo_b2b_tellix_kjor([$id => $gruppe])[$id] ?? null;
+        if ($r) $tellix = '&tellix=' . rawurlencode($r['status']) . '&tb=' . $id;
+    }
+
+    wp_redirect(admin_url('admin.php?page=amendo-settings&b2b=' . rawurlencode($svar) . $tellix . '#b2b'));
     exit;
 });
 
@@ -170,10 +183,14 @@ add_action('amendo_admin_paneler', function() {
     $side     = max(1, (int) ($_GET['b2b_side'] ?? 1));
     $kunder   = amendo_b2b_kunder($sok, $side);
     $sider    = (int) ceil($kunder['totalt'] / AMENDO_B2B_PER_SIDE);
+    $tellix_i_bruk = amendo_b2b_tellix_i_bruk();
     ?>
     <div class="amendo-panel" id="tab-b2b">
         <?php if ($melding): ?>
             <div class="amendo-b2b-melding amendo-b2b-melding-<?php echo esc_attr($melding[0]); ?>"><?php echo esc_html($melding[1]); ?></div>
+        <?php endif; ?>
+        <?php if ($tm = amendo_b2b_tellix_melding()): ?>
+            <div class="amendo-b2b-melding amendo-b2b-melding-<?php echo esc_attr($tm[0]); ?>" id="b2b-tellix-melding"><?php echo esc_html($tm[1]); ?><?php if ($tm[0] !== 'ok'): ?> <a href="#b2b-tellix">Til Tellix-kobling</a><?php endif; ?></div>
         <?php endif; ?>
 
         <?php // Underfaner. Alt står i hovedskjemaet; admin.js viser én om gangen. ?>
@@ -192,7 +209,7 @@ add_action('amendo_admin_paneler', function() {
                 <p class="field-help">Ingen søknader venter.</p>
             <?php else: ?>
             <table class="amendo-tabell">
-                <thead><tr><th>Sendt</th><th>Firma</th><th>Org.nr</th><th>Kontaktperson</th><th>Allerede godkjent på nummeret</th><th></th></tr></thead>
+                <thead><tr><th>Sendt</th><th>Firma</th><th>Org.nr</th><th>Kontaktperson</th><th>Allerede godkjent på nummeret</th><?php if ($tellix_i_bruk): ?><th>Kundegruppe i Tellix</th><?php endif; ?><th></th></tr></thead>
                 <tbody>
                 <?php foreach ($soknader as $u):
                     $orgnr = amendo_b2b_orgnr(get_user_meta($u->ID, '_orgnr_soknad', true));
@@ -206,6 +223,9 @@ add_action('amendo_admin_paneler', function() {
                     <td><?php if ($orgnr): ?><a href="<?php echo esc_url('https://virksomhet.brreg.no/oppslag/enheter/' . $orgnr); ?>" target="_blank" rel="noopener"><?php echo esc_html($orgnr); ?></a><?php else: ?>—<?php endif; ?></td>
                     <td><a href="<?php echo esc_url(get_edit_user_link($u->ID)); ?>"><?php echo esc_html(trim($u->first_name . ' ' . $u->last_name) ?: $u->display_name); ?></a><br><span class="field-help"><?php echo esc_html($u->user_email); ?></span></td>
                     <td><?php echo $andre ? esc_html($andre . ' bruker' . ($andre === 1 ? '' : 'e')) : 'Ingen'; ?></td>
+                    <?php if ($tellix_i_bruk): ?>
+                    <td><select form="amendo-b2b-behandle" name="gruppe[<?php echo (int) $u->ID; ?>]" aria-label="Kundegruppe hvis kunden opprettes i Tellix"><?php amendo_b2b_tellix_gruppevalg(null); ?></select><br><span class="field-help">Brukes hvis kunden ikke finnes i Tellix.</span></td>
+                    <?php endif; ?>
                     <td class="b2b-knapper">
                         <button type="submit" form="amendo-b2b-behandle" name="godkjenn" value="<?php echo (int) $u->ID; ?>" class="amendo-btn-secondary b2b-bekreft" data-bekreft="<?php echo esc_attr('Godkjenne ' . (get_user_meta($u->ID, 'billing_company', true) ?: $orgnr) . '? Kunden får se bestillingene til alle med org.nr ' . $orgnr . '.'); ?>">Godkjenn</button>
                         <button type="submit" form="amendo-b2b-behandle" name="avvis" value="<?php echo (int) $u->ID; ?>" class="amendo-btn-danger b2b-bekreft" data-bekreft="Avvise søknaden? Kunden beholder kontoen som privatkunde.">Avvis</button>
@@ -229,7 +249,7 @@ add_action('amendo_admin_paneler', function() {
                 <p class="field-help"><?php echo $sok !== '' ? 'Ingen treff.' : 'Ingen bedriftskunder ennå.'; ?></p>
             <?php else: ?>
             <table class="amendo-tabell">
-                <thead><tr><th>Firma</th><th>Org.nr</th><th>Kontaktperson</th><th>Kundegruppe</th><th>Godkjent</th></tr></thead>
+                <thead><tr><th>Firma</th><th>Org.nr</th><th>Kontaktperson</th><th>Kundegruppe</th><?php if ($tellix_i_bruk): ?><th>Tellix-kunde</th><?php endif; ?><th>Godkjent</th></tr></thead>
                 <tbody>
                 <?php foreach ($kunder['kunder'] as $u):
                     $behandlet = (string) get_user_meta($u->ID, '_b2b_behandlet', true);
@@ -239,6 +259,7 @@ add_action('amendo_admin_paneler', function() {
                     <td><?php echo esc_html(get_user_meta($u->ID, 'billing_org_number', true)); ?></td>
                     <td><a href="<?php echo esc_url(get_edit_user_link($u->ID)); ?>"><?php echo esc_html(trim($u->first_name . ' ' . $u->last_name) ?: $u->display_name); ?></a><br><span class="field-help"><?php echo esc_html($u->user_email); ?></span></td>
                     <td><?php $gid = (int) get_user_meta($u->ID, '_tellixGroupId', true); echo esc_html($gid ? ((amendo_tellix_grupper()[$gid]['navn'] ?? '') ?: (string) $gid) : '—'); ?></td>
+                    <?php if ($tellix_i_bruk): ?><td class="b2b-tellix-kunde"><?php echo esc_html(amendo_b2b_tellix_er_koblet($u->ID) ? ((string) get_user_meta($u->ID, '_tellixCustomerId', true) ?: 'Koblet') : 'Ikke koblet'); ?></td><?php endif; ?>
                     <td><?php echo esc_html($behandlet ? wp_date('d.m.Y', strtotime($behandlet)) : '—'); ?></td>
                 </tr>
                 <?php endforeach; ?>
@@ -255,6 +276,8 @@ add_action('amendo_admin_paneler', function() {
             <?php endif; ?>
         </div>
 
+        <?php if ($tellix_i_bruk) amendo_b2b_tellix_kort(); ?>
+
         </div>
 
         <div class="amendo-underpanel" data-under-panel="kundegrupper">
@@ -269,5 +292,6 @@ add_action('amendo_admin_paneler', function() {
 });
 
 require_once __DIR__ . '/b2b-tellix.php';
+require_once __DIR__ . '/b2b-tellix-kunder.php';
 require_once __DIR__ . '/b2b-kundegrupper.php';
 require_once __DIR__ . '/b2b-helsebygget.php';

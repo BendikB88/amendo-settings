@@ -104,6 +104,8 @@ if (get_option('amendo_test_tellix') === '1' && !class_exists(__NAMESPACE__ . '\
                     'isActive'        => $k['aktiv'] ?? true,
                     'isDeleted'       => $k['slettet'] ?? false,
                 ];
+                // 1.4.22: org.nummeret, som sync-pluginen sender det.
+                if (isset($k['orgnr'])) $o->orgNumber = $k['orgnr'];
                 if ($form !== 'raa') unset($o->customerGroupId);
                 if ($form === 'core') $o->groupId = $k['groupId'] ?? null;
                 return $o;

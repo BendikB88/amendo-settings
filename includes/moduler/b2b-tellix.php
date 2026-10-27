@@ -223,6 +223,30 @@ function amendo_tellix_gruppe_fra_rad($k) {
 }
 
 /**
+ * Org.nummeret (bare sifre) til én kunde i Tellix-svaret, eller ''. Til
+ * oppslaget ved B2B-godkjenning (1.4.22, b2b-tellix-kunder.php).
+ *
+ * ⚠ Feltnavnet i v2/customer/list er ikke bekreftet. Sync-pluginen SENDER
+ * `orgNumber`, så det prøves først, så andre kjente navn, og til slutt et
+ * hvilket som helst felt med «org» i navnet som har nøyaktig ni sifre. Har
+ * lista ingen org.nr i det hele tatt, oppretter godkjenningen ingen kunde
+ * på egen hånd — se amendo_b2b_tellix_en().
+ * Kopier fra før 1.4.22 (format < 3) har ikke feltet, men godkjenningen
+ * henter alltid lista på nytt.
+ */
+function amendo_tellix_orgnr_fra_rad($k) {
+    $siffer = function($v) { return is_scalar($v) ? preg_replace('/\D/', '', (string) $v) : ''; };
+    foreach (['orgNumber', 'organizationNumber', 'organisationNumber', 'orgNo', 'orgNr', 'orgnr'] as $felt) {
+        $s = $siffer(amendo_tellix_felt($k, $felt));
+        if ($s !== '') return $s;
+    }
+    foreach ((is_object($k) ? get_object_vars($k) : (is_array($k) ? $k : [])) as $navn => $v) {
+        if (stripos((string) $navn, 'org') !== false && strlen($s = $siffer($v)) === 9) return $s;
+    }
+    return '';
+}
+
+/**
  * Kopien: ['hentet' => tid, 'kunder' => [...]], eller null.
  * Kopier fra før 1.4.19 (uten 'format') skrev 0 også når gruppefeltet
  * manglet. Der er 0 derfor «ukjent» (null), aldri «ingen gruppe».
@@ -261,8 +285,12 @@ function amendo_tellix_liste_las() {
  * hentet. Gjør ingenting (false) når låsen er tatt, eller når Tellix svarer
  * feil på en side — da står den forrige kopien.
  */
-function amendo_tellix_liste_hent() {
-    if (!amendo_tellix_api_tilgjengelig() || !amendo_tellix_liste_las()) return false;
+function amendo_tellix_liste_hent($tving = false) {
+    // $tving (1.4.22): godkjenning i B2B må se lista slik den er NÅ, ellers
+    // kan en kunde som finnes bli opprettet på nytt. Låsen tas likevel, så
+    // andre forespørsler ikke henter igjen med en gang.
+    if (!amendo_tellix_api_tilgjengelig()) return false;
+    if (!amendo_tellix_liste_las() && !$tving) return false;
     $start  = microtime(true);
     $side   = max(1, (int) apply_filters('amendo_tellix_side', AMENDO_TELLIX_SIDE));
     $kunder = [];
@@ -289,11 +317,12 @@ function amendo_tellix_liste_hent() {
                 'navn'      => trim((string) ($k->name ?? '')),
                 'epost'     => amendo_tellix_epost($k->email ?? ''),
                 'telefon'   => amendo_tellix_telefon_fra_tellix($k->phoneNumber ?? ''),
+                'orgnr'     => amendo_tellix_orgnr_fra_rad($k),
             ];
         }
         $offset += count($r->customers);
     }
-    update_option('amendo_tellix_kundeliste', ['hentet' => time(), 'format' => 2, 'kunder' => $kunder], false);
+    update_option('amendo_tellix_kundeliste', ['hentet' => time(), 'format' => 3, 'kunder' => $kunder], false);
     amendo_tellix_logg(sprintf('kundelista hentet: %d kunder, %d sider, %.1f s', count($kunder), $i, microtime(true) - $start));
     return true;
 }
