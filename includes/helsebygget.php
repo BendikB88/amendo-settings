@@ -28,6 +28,18 @@
  * hvem som helst.
  *
  * GET /helsebygget-produkter er uendret (åpen).
+ *
+ * Skjulte varianter (1.4.21): et produkt kan være aktivt på Helsebygget mens
+ * bare noen av variantene kan bestilles der (Muffins: bare Sjokolade og
+ * Vanilje). Lista over skjulte variasjons-ID-er står i
+ * `amendo_helsebygget_skjulte_varianter` (JSON, som amendo_helsebygget_
+ * produkter) og går ut som `skjulte_varianter` i GET. POST tar den imot
+ * valgfritt: UTELATT = urørt (eldre frontender sender den ikke), [] = tøm,
+ * noe annet enn en liste = 400. Bare ID-er som er en product_variation
+ * lagres; resten droppes stille.
+ * ⚠ Lista gjelder BARE Helsebygget. Den påvirker ikke WooCommerce (kjøpbar,
+ * lager, nettbutikken) — frontenden håndhever den på produktsiden og i
+ * /api/ordre.
  */
 
 if (!defined('ABSPATH')) exit;
@@ -165,24 +177,60 @@ function amendo_hb_registrer_feil() {
     set_transient(amendo_hb_feil_nokkel(), $t, AMENDO_HB_FEIL_VINDU);
 }
 
+// ── Skjulte varianter (1.4.21) ──────────────────────────────────────────────
+
+/** De lagrede variasjons-ID-ene, alltid en liste med int. */
+function amendo_hb_skjulte_varianter() {
+    $raa = get_option('amendo_helsebygget_skjulte_varianter', '[]');
+    $data = is_array($raa) ? $raa : json_decode((string) $raa, true);
+    return is_array($data) ? array_values(array_map('intval', $data)) : [];
+}
+
+/** En JSON-liste ([…]), ikke et objekt ({…}), en streng eller null. */
+function amendo_hb_er_liste($v) {
+    return is_array($v) && ($v === [] || array_keys($v) === range(0, count($v) - 1));
+}
+
+/** Bare heltall > 0, unike, og bare variasjoner. Resten droppes stille. */
+function amendo_hb_skjulte_rens(array $liste) {
+    $ut = [];
+    foreach ($liste as $v) {
+        if (is_int($v)) $id = $v;
+        elseif (is_string($v) && ctype_digit($v)) $id = (int) $v;
+        else continue;
+        if ($id > 0 && !in_array($id, $ut, true) && get_post_type($id) === 'product_variation') $ut[] = $id;
+    }
+    return $ut;
+}
+
 // ── Logg ────────────────────────────────────────────────────────────────────
 
-/** De siste endringene, nyeste først: [tid, navn, lagt_til, fjernet, antall]. */
+/**
+ * De siste endringene, nyeste først: [tid, navn, lagt_til, fjernet, antall],
+ * og fra 1.4.21 [skjulte_foer, skjulte_etter] (antall) når skjulte varianter
+ * ble endret.
+ */
 function amendo_hb_logg() {
     $data = json_decode((string) get_option('amendo_helsebygget_logg', '[]'), true);
     return is_array($data) ? $data : [];
 }
 
-function amendo_hb_logg_skriv(array $ansatt, array $foer, array $etter) {
+/** $skjulte: [før, etter] (lister med ID-er) når POST hadde skjulte_varianter, ellers null. */
+function amendo_hb_logg_skriv(array $ansatt, array $foer, array $etter, ?array $skjulte = null) {
     $logg = amendo_hb_logg();
-    array_unshift($logg, [
+    $rad = [
         'tid'      => time(),
         'navn'     => (string) $ansatt['navn'],
         'ansatt'   => (string) $ansatt['id'],
         'lagt_til' => array_values(array_diff($etter, $foer)),
         'fjernet'  => array_values(array_diff($foer, $etter)),
         'antall'   => count($etter),
-    ]);
+    ];
+    if ($skjulte && (array_diff($skjulte[0], $skjulte[1]) || array_diff($skjulte[1], $skjulte[0]))) {
+        $rad['skjulte_foer']  = count($skjulte[0]);
+        $rad['skjulte_etter'] = count($skjulte[1]);
+    }
+    array_unshift($logg, $rad);
     update_option('amendo_helsebygget_logg', wp_json_encode(array_slice($logg, 0, AMENDO_HB_LOGG_MAKS)), false);
 }
 

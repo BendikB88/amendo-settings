@@ -25,7 +25,7 @@ const nyPin = html => html.match(/class="amendo-pin">(\d{6})</)?.[1];
 
 const ids = await get('/amendo-test/v1/setup');
 await get('/amendo-test/v1/v1417-nullstill');
-await opt({ amendo_kasse_secret: SECRET, amendo_moduler: JSON.stringify(['b2b']), amendo_helsebygget_produkter: JSON.stringify([ids.brod]) });
+await opt({ amendo_kasse_secret: SECRET, amendo_moduler: JSON.stringify(['b2b']), amendo_helsebygget_produkter: JSON.stringify([ids.brod]), amendo_helsebygget_skjulte_varianter: null });
 
 // ── Ansatte i fanen ─────────────────────────────────────────────────────────
 console.log('Ansatte i B2B → Helsebygget');
@@ -100,6 +100,52 @@ html = await side();
 const loggDel = html.slice(html.indexOf('id="b2b-helsebygget-logg"'));
 sjekk('fanen viser loggen med navn og varenavn', (loggDel.match(/class="hb-logg"/g) || []).length === 2 && loggDel.includes('Ola') && loggDel.includes('Tok bort:') && loggDel.includes('La til:') && !loggDel.includes('vare #'));
 
+// ── Skjulte varianter (1.4.21) ──────────────────────────────────────────────
+console.log('\nSkjulte varianter (1.4.21)');
+const lagreSkjulte = (body, token = tokenKari, secret) => kall('helsebygget-produkter', { body, token, secret });
+const hent = () => kall('helsebygget-produkter', { metode: 'GET', secret: null });
+const tilstand21 = () => get('/amendo-test/v1/v1421-tilstand');
+const kjopbarFoer = (await tilstand21()).v1_kjopbar;
+r = await hent();
+sjekk('GET uten lagret verdi: skjulte_varianter er []', Array.isArray(r.json?.skjulte_varianter) && r.json.skjulte_varianter.length === 0, r.json?.skjulte_varianter);
+r = await lagreSkjulte({ aktive_ids: [ids.kake_id], skjulte_varianter: [ids.v1_id] }, null);
+sjekk('uten token: 401 som før, ingenting lagret', r.status === 401 && (await tilstand21()).skjulte_raa === null, r.status);
+r = await lagreSkjulte({ aktive_ids: [ids.kake_id], skjulte_varianter: [ids.v1_id] }, tokenKari, null);
+sjekk('uten secret: avvist som før', r.status === 401 || r.status === 403, r.status);
+r = await lagreSkjulte({ aktive_ids: [ids.kake_id], skjulte_varianter: [ids.v1_id, ids.v2_id] });
+sjekk('POST med lista: { ok, aktive, skjulte }', r.status === 200 && r.json?.ok === true && r.json?.aktive === 1 && r.json?.skjulte === 2, [r.status, r.json]);
+r = await hent();
+sjekk('GET leser den tilbake', JSON.stringify(r.json?.skjulte_varianter) === JSON.stringify([ids.v1_id, ids.v2_id]), r.json?.skjulte_varianter);
+sjekk('produkter og aktive_ids som før', Array.isArray(r.json?.produkter) && JSON.stringify(r.json?.aktive_ids) === JSON.stringify([ids.kake_id]), r.json?.aktive_ids);
+let t21 = await tilstand21();
+sjekk('samme autoload som amendo_helsebygget_produkter', t21.autoload_skjulte !== null && t21.autoload_skjulte === t21.autoload_produkter, t21);
+sjekk('nettbutikken er urørt: variasjonen er fortsatt kjøpbar', t21.v1_kjopbar === kjopbarFoer && t21.v1_kjopbar === true, t21);
+t = await tilstand();
+sjekk('logget: hvem og antall før/etter', t.logg[0].navn === 'Kari Nordmann' && t.logg[0].skjulte_foer === 0 && t.logg[0].skjulte_etter === 2, t.logg[0]);
+r = await lagre([ids.kake_id, ids.brod], tokenKari);
+sjekk('POST uten feltet (eldre frontend): lista står, skjulte = antall lagret', r.status === 200 && r.json?.skjulte === 2 && JSON.stringify((await hent()).json?.skjulte_varianter) === JSON.stringify([ids.v1_id, ids.v2_id]), r.json);
+t = await tilstand();
+sjekk('… og loggen sier ingenting om skjulte varianter', t.logg[0].skjulte_foer === undefined && JSON.stringify(t.logg[0].lagt_til) === JSON.stringify([ids.brod]), t.logg[0]);
+const slettet = (await get('/amendo-test/v1/v1421-slettet-variasjon')).id;
+r = await lagreSkjulte({ aktive_ids: [ids.kake_id], skjulte_varianter: [ids.v2_id, String(ids.v1_id), ids.v2_id, ids.kake_id, ids.brod, slettet, 'x', -1, 0, 1.5, null, { id: ids.v1_id }, [ids.v1_id]] });
+sjekk('søppel droppes stille: dubletter, produkt-ID-er, slettet ID, "x", -1, 0, 1.5, null, objekt', r.status === 200 && r.json?.skjulte === 2 && JSON.stringify((await hent()).json?.skjulte_varianter) === JSON.stringify([ids.v2_id, ids.v1_id]), [r.json, slettet]);
+for (const [navn, verdi] of [['et objekt', { a: ids.v1_id }], ['en streng', String(ids.v1_id)], ['null', null], ['et tall', ids.v1_id]]) {
+  r = await lagreSkjulte({ aktive_ids: [ids.brod], skjulte_varianter: verdi });
+  sjekk(`ikke en liste (${navn}): 400 amendo_helsebygget_ugyldig`, r.status === 400 && r.json?.code === 'amendo_helsebygget_ugyldig', [r.status, r.json]);
+}
+r = await hent();
+sjekk('… og ingenting er lagret (heller ikke aktive_ids)', JSON.stringify(r.json?.aktive_ids) === JSON.stringify([ids.kake_id]) && r.json?.skjulte_varianter.length === 2, r.json?.aktive_ids);
+html = await side();
+const skjulteDel = html.slice(html.indexOf('id="b2b-helsebygget-skjulte"'), html.indexOf('id="b2b-helsebygget-logg"'));
+sjekk('fanen viser antall skjulte varianter per produkt', /class="hb-skjulte">\s*<td>Kake<\/td>\s*<td>2<\/td>/.test(skjulteDel), skjulteDel.slice(0, 600));
+sjekk('loggen i fanen viser endringen', html.includes('Skjulte varianter: 0 → 2.'));
+r = await lagreSkjulte({ aktive_ids: [ids.kake_id], skjulte_varianter: [] });
+sjekk('POST med [] tømmer', r.status === 200 && r.json?.skjulte === 0 && JSON.stringify((await hent()).json?.skjulte_varianter) === '[]', r.json);
+t = await tilstand();
+sjekk('… logget 2 → 0', t.logg[0].skjulte_foer === 2 && t.logg[0].skjulte_etter === 0, t.logg[0]);
+html = await side();
+sjekk('fanen: ingen varianter er skjult', html.includes('Ingen varianter er skjult.'));
+
 const utlopt = (await get('/amendo-test/v1/v1417-utlopt-token', { id: kari.id, alder: 5 })).token;
 r = await lagre([ids.brod], utlopt);
 sjekk('utløpt token: 401', r.status === 401, r.status);
@@ -154,5 +200,5 @@ html = await side();
 sjekk('fanen sier at innloggingen er stengt', html.includes('amendo-hb-stengt'));
 
 await get('/amendo-test/v1/v1417-nullstill');
-await opt({ amendo_kasse_secret: null, amendo_moduler: null, amendo_helsebygget_produkter: null });
+await opt({ amendo_kasse_secret: null, amendo_moduler: null, amendo_helsebygget_produkter: null, amendo_helsebygget_skjulte_varianter: null });
 ferdig();

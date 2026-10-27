@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.20
+ * Version: 1.4.21
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.20');
+define('AMENDO_SETTINGS_VERSION', '1.4.21');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -317,18 +317,28 @@ function amendo_get_helsebygget_produkter() {
     return new WP_REST_Response([
         'produkter'  => $produkter,
         'aktive_ids' => $aktive_ids,
+        // 1.4.21 — se includes/helsebygget.php. Alltid en liste.
+        'skjulte_varianter' => amendo_hb_skjulte_varianter(),
     ], 200);
 }
 
 function amendo_set_helsebygget_produkter($request) {
     $body = $request->get_json_params();
+    // 1.4.21: utelatt = urørt, [] = tøm. Sjekkes før noe lagres.
+    $med_skjulte = is_array($body) && array_key_exists('skjulte_varianter', $body);
+    if ($med_skjulte && !amendo_hb_er_liste($body['skjulte_varianter'])) {
+        return new WP_REST_Response(['code' => 'amendo_helsebygget_ugyldig', 'message' => 'skjulte_varianter må være en liste.'], 400);
+    }
     $ids  = array_map('intval', $body['aktive_ids'] ?? []);
     $foer = array_map('intval', json_decode(get_option('amendo_helsebygget_produkter', '[]'), true) ?: []);
     update_option('amendo_helsebygget_produkter', json_encode($ids));
+    $skjulte_foer = amendo_hb_skjulte_varianter();
+    $skjulte = $med_skjulte ? amendo_hb_skjulte_rens($body['skjulte_varianter']) : $skjulte_foer;
+    if ($med_skjulte) update_option('amendo_helsebygget_skjulte_varianter', wp_json_encode($skjulte));
     // Hvem, når og hva — se includes/helsebygget.php.
     $ansatt = amendo_hb_token_sjekk((string) $request->get_header('X-Helsebygget-Token'));
-    if ($ansatt) amendo_hb_logg_skriv($ansatt, $foer, $ids);
-    return new WP_REST_Response(['ok' => true, 'aktive' => count($ids)], 200);
+    if ($ansatt) amendo_hb_logg_skriv($ansatt, $foer, $ids, $med_skjulte ? [$skjulte_foer, $skjulte] : null);
+    return new WP_REST_Response(['ok' => true, 'aktive' => count($ids), 'skjulte' => count($skjulte)], 200);
 }
 
 // amendo_gateway_redirect() og amendo_create_adyen_session(): se includes/betaling.php.

@@ -63,7 +63,20 @@ function amendo_hb_endring_tekst(array $rad) {
     $deler = [];
     if (!empty($rad['lagt_til'])) $deler[] = 'La til: ' . $navn($rad['lagt_til']) . '.';
     if (!empty($rad['fjernet'])) $deler[] = 'Tok bort: ' . $navn($rad['fjernet']) . '.';
+    if (isset($rad['skjulte_foer'], $rad['skjulte_etter'])) {
+        $deler[] = 'Skjulte varianter: ' . (int) $rad['skjulte_foer'] . ' → ' . (int) $rad['skjulte_etter'] . '.';
+    }
     return $deler ? implode(' ', $deler) : 'Ingen endring.';
+}
+
+/** [produkt-ID => antall skjulte varianter], for oversikten i fanen (1.4.21). */
+function amendo_hb_skjulte_per_produkt() {
+    $ut = [];
+    foreach (amendo_hb_skjulte_varianter() as $id) {
+        $forelder = wp_get_post_parent_id($id);
+        if ($forelder) $ut[$forelder] = ($ut[$forelder] ?? 0) + 1;
+    }
+    return $ut;
 }
 
 /** Underfanen. Kalles inne i hovedskjemaet; knappene peker på #amendo-hb-ansatt. */
@@ -112,6 +125,27 @@ function amendo_hb_kort() {
             <button type="submit" form="amendo-hb-ansatt" name="ny_ansatt" value="1" class="amendo-btn-secondary">+ Legg til ansatt</button>
         </div>
         <p class="field-help">PIN-koden lages automatisk (6 sifre).</p>
+    </div>
+
+    <?php $skjulte = amendo_hb_skjulte_per_produkt(); ?>
+    <div class="amendo-card" id="b2b-helsebygget-skjulte">
+        <h2>Skjulte varianter</h2>
+        <p class="amendo-desc">Varianter som ikke kan bestilles på Helsebygget, selv om produktet er med. De ansatte velger dem i Helsebygget-admin på nettsiden. Nettbutikken påvirkes ikke.</p>
+        <?php if (!$skjulte): ?>
+            <p class="field-help">Ingen varianter er skjult.</p>
+        <?php else: ?>
+        <table class="amendo-tabell">
+            <thead><tr><th>Produkt</th><th>Skjulte varianter</th></tr></thead>
+            <tbody>
+            <?php foreach ($skjulte as $produkt => $antall): ?>
+                <tr class="hb-skjulte">
+                    <td><?php echo esc_html(get_the_title($produkt) !== '' ? wp_specialchars_decode(get_the_title($produkt), ENT_QUOTES) : 'vare #' . (int) $produkt); ?></td>
+                    <td><?php echo (int) $antall; ?></td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php endif; ?>
     </div>
 
     <div class="amendo-card" id="b2b-helsebygget-logg">
