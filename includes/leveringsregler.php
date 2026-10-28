@@ -8,6 +8,10 @@
  * - Bestillingsvindu per avdeling: `avdelinger[].bestillingsvindu_dager`,
  *   kalenderdager fram fra i dag som kan velges. Standard 60, også for
  *   avdelinger lagret før 1.4.18 (feltet er alltid med i svaret).
+ * - Klargjøringstid per avdeling (1.4.24): `avdelinger[].klargjoring_minutter`,
+ *   heltall 0–1440, standard 15 (også for avdelinger lagret før 1.4.24).
+ *   Første hentetidsluke SAMME DAG starter tidligst nå + klargjøringstiden.
+ *   Det regner frontenden ut; her ligger bare tallet.
  * - Antallsregler (`global.antall_regler`): «Fra X varer i kurven → minst N
  *   virkedager». Uten kategori telles alle varene i kurven, med kategori bare
  *   varene i den kategorien. `unntatt_avdelinger` er avdelingsnavn, som i
@@ -25,6 +29,14 @@ if (!defined('ABSPATH')) exit;
 
 const AMENDO_BESTILLINGSVINDU_STANDARD = 60;
 const AMENDO_ANTALL_REGLER_MAKS        = 50;
+const AMENDO_KLARGJORING_STANDARD     = 15;
+
+/** Avdelingens klargjøringstid i minutter (0–1440), standard 15. Tomt eller ugyldig = 15; 0 er gyldig. */
+function amendo_klargjoring($avd) {
+    $m = is_array($avd) ? ($avd['klargjoring_minutter'] ?? null) : null;
+    if (is_string($m)) $m = trim($m);
+    return is_numeric($m) && (int) $m >= 0 && (float) $m == (int) $m ? min(1440, (int) $m) : AMENDO_KLARGJORING_STANDARD;
+}
 
 /** Avdelingens bestillingsvindu i dager (1–365), standard 60. */
 function amendo_bestillingsvindu($avd) {

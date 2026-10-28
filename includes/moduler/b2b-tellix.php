@@ -562,8 +562,22 @@ function amendo_tellix_rest_kunde(WP_REST_Request $req) {
     $feil = amendo_kg_klar_eller_feil();
     if ($feil) return $feil;
     $id = (int) $req['user_id'];
-    if (!get_userdata($id)) return amendo_tellix_svar(0);
-    return amendo_tellix_svar(amendo_tellix_oppdater_bruker($id));
+    if (!get_userdata($id)) return amendo_tellix_svar(0) + ['tellix_koblet' => false];
+    $gruppe = amendo_tellix_oppdater_bruker($id);
+    // 1.4.24: etter oppslaget, så en kunde som ble koblet av det, teller.
+    return amendo_tellix_svar($gruppe) + ['tellix_koblet' => amendo_tellix_koblet($id)];
+}
+
+/**
+ * 1.4.24: har brukeren `_tellixCustomerUuId` (ikke tom, ikke '0')? Garçon
+ * viser og godtar faktura bare da; ellers får kunden beskjed om å kontakte
+ * butikken. Bare UUID-en teller, ikke `_tellixCustomerId` (det er slik
+ * feltet er bestilt). 1.4.22 skriver UUID-en ved B2B-godkjenning, og
+ * amendo_tellix_oppdater_bruker() når Tellix har kunden.
+ */
+function amendo_tellix_koblet($bruker_id) {
+    $uuid = (string) get_user_meta((int) $bruker_id, '_tellixCustomerUuId', true);
+    return $uuid !== '' && $uuid !== '0';
 }
 
 function amendo_tellix_rest_telefon(WP_REST_Request $req) {

@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.23
+ * Version: 1.4.24
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.23');
+define('AMENDO_SETTINGS_VERSION', '1.4.24');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -227,6 +227,8 @@ add_action('admin_post_amendo_save_settings', function() {
                 'tidsluke'         => !empty($avd['tidsluke']) ? intval($avd['tidsluke']) : null,
                 'maks_per_tidsluke'=> !empty($avd['maks_per_tidsluke']) ? intval($avd['maks_per_tidsluke']) : null,
                 'bestillingsvindu_dager' => amendo_bestillingsvindu($avd),
+                // 1.4.24 — se includes/leveringsregler.php.
+                'klargjoring_minutter' => amendo_klargjoring($avd),
                 // 1.4.23 — se includes/mal.php.
                 'inngang'          => amendo_inngang_rens($avd['inngang'] ?? null),
             ];
@@ -369,6 +371,8 @@ function amendo_get_leveringsregler() {
             'maks_per_tidsluke_resolved'=> $avd['maks_per_tidsluke'] ?? $global_maks,
             // 1.4.18 — se includes/leveringsregler.php. Alltid med, standard 60.
             'bestillingsvindu_dager'    => amendo_bestillingsvindu($avd),
+            // 1.4.24 — se includes/leveringsregler.php. Alltid med, standard 15.
+            'klargjoring_minutter'      => amendo_klargjoring($avd),
             // 1.4.23 — se includes/mal.php. Alltid med, standard 'nettbutikk'.
             'inngang'                   => amendo_avdeling_inngang($avd),
         ]);
@@ -764,6 +768,11 @@ function amendo_settings_page() {
                                         <label>Kan bestilles inntil</label>
                                         <input type="number" name="avdelinger[<?php echo $i; ?>][bestillingsvindu_dager]" value="<?php echo esc_attr(amendo_bestillingsvindu($avd)); ?>" min="1" max="365" style="width:90px"> dager fram
                                         <p class="field-help">Hvor langt fram kunden kan velge dato. Standard 60.</p>
+                                    </div>
+                                    <div class="amendo-field">
+                                        <label>Klargjøringstid (minutter)</label>
+                                        <input type="number" name="avdelinger[<?php echo $i; ?>][klargjoring_minutter]" value="<?php echo esc_attr(amendo_klargjoring($avd)); ?>" min="0" max="1440" style="width:90px"> min
+                                        <p class="field-help">Første hentetid samme dag er tidligst nå + klargjøringstiden. Standard 15.</p>
                                     </div>
                                     <div class="amendo-field">
                                         <label>Tillat henting her</label>

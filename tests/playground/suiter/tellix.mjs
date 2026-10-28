@@ -78,7 +78,8 @@ sjekk('200', r.status === 200, r.tekst);
 sjekk('gruppe 14 fra Tellix (ikke den lagrede 0)', r.json?.gruppe_id === 14 && r.json?.gruppe_navn === 'Bedriftskunder', r.json);
 sjekk('nettbutikk: gruppens sats og kategorisatsen', r.json?.nettbutikk?.prosent === 10 && r.json?.nettbutikk?.kategorier?.[String(kat.ringer)] === 15, r.json?.nettbutikk);
 sjekk('helsebygget null for vanlig gruppe', r.json?.helsebygget === null);
-sjekk('nøyaktig de fire feltene', JSON.stringify(Object.keys(r.json || {}).sort()) === '["gruppe_id","gruppe_navn","helsebygget","nettbutikk"]', Object.keys(r.json || {}));
+sjekk('nøyaktig de fem feltene (tellix_koblet fra 1.4.24)', JSON.stringify(Object.keys(r.json || {}).sort()) === '["gruppe_id","gruppe_navn","helsebygget","nettbutikk","tellix_koblet"]', Object.keys(r.json || {}));
+sjekk('tellix_koblet: true når samme oppslag skrev _tellixCustomerUuId', r.json?.tellix_koblet === true, r.json?.tellix_koblet);
 let m = await brukermeta('bedrift@example.com');
 sjekk('_tellixGroupId, _tellixCustomerId og _tellixCustomerUuId oppdatert', m.meta._tellixGroupId === '14' && m.meta._tellixCustomerId === 'T1' && m.meta._tellixCustomerUuId === 'U1', m.meta);
 let s = await tilstand();
@@ -98,6 +99,7 @@ r = await kunde('ukjent@example.com');
 m = await brukermeta('ukjent@example.com');
 sjekk('ikke i Tellix: den lagrede gruppen brukes', r.json?.gruppe_id === 14, r.json);
 sjekk('… og feltene tømmes ikke (koblet til T9, som Tellix ikke har)', m.meta._tellixGroupId === '14' && m.meta._tellixCustomerId === 'T9', m.meta);
+sjekk('tellix_koblet: false med bare _tellixCustomerId (ingen UUID)', r.json?.tellix_koblet === false, r.json);
 
 r = await kunde('faktura@example.com');
 sjekk('inaktiv gruppe i Tellix: ingen rabatt, ingen navn', r.json?.gruppe_id === 3 && r.json?.gruppe_navn === null && r.json?.nettbutikk === null && r.json?.helsebygget === null, r.json);
@@ -107,6 +109,19 @@ sjekk('get_tellix_customer_groups kalt én gang for alle oppslagene over (transi
 
 r = await rute('rabatt/kunde/999999');
 sjekk('ukjent WordPress-bruker: 200 med null', r.status === 200 && r.json?.gruppe_id === null && r.json?.nettbutikk === null, r.json);
+sjekk('… og tellix_koblet false', r.json?.tellix_koblet === false, r.json);
+
+// 1.4.24: tellix_koblet = brukeren har _tellixCustomerUuId (ikke tom, ikke '0').
+await bruker('uuid-null@example.com', { _tellixCustomerUuId: '0' });
+r = await kunde('uuid-null@example.com');
+sjekk("tellix_koblet: false når _tellixCustomerUuId er '0'", r.status === 200 && r.json?.tellix_koblet === false, r.json);
+await bruker('uuid-gammel@example.com', { _tellixCustomerUuId: 'U-GAMMEL' });
+r = await kunde('uuid-gammel@example.com');
+m = await brukermeta('uuid-gammel@example.com');
+sjekk('tellix_koblet: true med UUID også når Tellix ikke har kunden (UUID-en tømmes aldri)', r.json?.tellix_koblet === true && m.meta._tellixCustomerUuId === 'U-GAMMEL', [r.json, m.meta]);
+await bruker('uten-alt@example.com', {});
+r = await kunde('uten-alt@example.com');
+sjekk('tellix_koblet: false uten noe', r.json?.tellix_koblet === false, r.json);
 
 await klargjor({ liste_slett: true, api_feil: '1' });
 r = await kunde('bedrift@example.com');

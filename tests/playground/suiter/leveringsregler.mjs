@@ -30,6 +30,7 @@ await sett({
 console.log('Uten noe lagret');
 let r = await regler();
 sjekk('bestillingsvindu: 60 for avdelinger lagret før 1.4.18', r.avdelinger?.length === 2 && r.avdelinger.every(a => a.bestillingsvindu_dager === 60), r.avdelinger?.map(a => a.bestillingsvindu_dager));
+sjekk('klargjoring_minutter: 15 for avdelinger lagret før 1.4.24', r.avdelinger?.every(a => a.klargjoring_minutter === 15), r.avdelinger?.map(a => a.klargjoring_minutter));
 sjekk('de gamle avdelingsfeltene står som før', r.avdelinger?.[0]?.prosesseringstid_resolved === 1 && r.avdelinger?.[1]?.prosesseringstid_resolved === 2 && r.avdelinger?.[0]?.navn === 'Sentrum');
 sjekk('global.antall_regler: tom liste', Array.isArray(r.global?.antall_regler) && r.global?.antall_regler.length === 0, r.global?.antall_regler);
 sjekk('stengt på helligdager er standard', r.global?.stengt_helligdager === true);
@@ -68,7 +69,16 @@ let l = await lagre({ avdelinger: [avdPost('14'), { ...avdPost(''), navn: 'Helse
 sjekk('bestillingsvindu lagret: 14, tomt = 60, 999 = 365, uten feltet = 60', JSON.stringify(l.avdelinger?.map(a => a.bestillingsvindu_dager)) === '[14,60,365,60]', l.avdelinger?.map(a => a.bestillingsvindu_dager));
 r = await regler();
 sjekk('/leveringsregler: bestillingsvindu per avdeling', JSON.stringify(r.avdelinger.map(a => a.bestillingsvindu_dager)) === '[14,60,365,60]');
-await lagre({ avdelinger: [avdPost('14'), { ...avdPost('7'), navn: 'Helsebygget' }] });
+// 1.4.24: klargjøringstid i minutter. 0 er gyldig; tomt, negativt, desimal og tekst = 15; maks 1440.
+const kPost = (k) => ({ ...avdPost('60'), ...(k === undefined ? {} : { klargjoring_minutter: k }) });
+l = await lagre({ avdelinger: [kPost('30'), kPost('0'), kPost(''), kPost('-5'), kPost('2000'), kPost('abc'), kPost('7.5'), kPost(undefined), kPost(' 45 ')] });
+sjekk('klargjøringstid lagret: 30, 0, tomt = 15, -5 = 15, 2000 = 1440, abc = 15, 7.5 = 15, uten feltet = 15, « 45 » = 45', JSON.stringify(l.avdelinger?.map(a => a.klargjoring_minutter)) === '[30,0,15,15,1440,15,15,15,45]', l.avdelinger?.map(a => a.klargjoring_minutter));
+r = await regler();
+sjekk('/leveringsregler: klargjoring_minutter som heltall per avdeling', JSON.stringify(r.avdelinger.map(a => a.klargjoring_minutter)) === '[30,0,15,15,1440,15,15,15,45]', r.avdelinger.map(a => a.klargjoring_minutter));
+await sett({ amendo_avdelinger: [{ navn: 'Rå', klargjoring_minutter: '20' }, { navn: 'Rå 2', klargjoring_minutter: 'x' }] });
+r = await regler();
+sjekk('/leveringsregler renser også det som ligger lagret («20» → 20, «x» → 15)', JSON.stringify(r.avdelinger.map(a => a.klargjoring_minutter)) === '[20,15]', r.avdelinger.map(a => a.klargjoring_minutter));
+await lagre({ avdelinger: [{ ...avdPost('14'), klargjoring_minutter: '25' }, { ...avdPost('7'), navn: 'Helsebygget' }] });
 
 const antallPost = [
   { fra_antall: '20', min_virkedager: '3', kategori_id: '', unntatt_avdelinger: ['Helsebygget', 'Helsebygget'] },
@@ -108,6 +118,7 @@ console.log('\nAdmin');
 const html = await side();
 sjekk('hjelpeteksten om den lengste tiden', html.includes('Kunden får den lengste tiden av: avdelingens produksjonstid, kategoriens produksjonstid og antallsreglene.'));
 sjekk('«Kan bestilles inntil N dager fram» per avdeling', /name="avdelinger\[0\]\[bestillingsvindu_dager\]" value="14"/.test(html) && /name="avdelinger\[1\]\[bestillingsvindu_dager\]" value="7"/.test(html) && html.includes('Kan bestilles inntil'));
+sjekk('«Klargjøringstid (minutter)» per avdeling: 25 lagret, 15 som standard', /name="avdelinger\[0\]\[klargjoring_minutter\]" value="25"/.test(html) && /name="avdelinger\[1\]\[klargjoring_minutter\]" value="15"/.test(html) && html.includes('Klargjøringstid (minutter)'));
 sjekk('bryteren «Stengt på helligdager», på', /id="stengt_helligdager" name="stengt_helligdager"\s+checked/.test(html) && html.includes('name="stengt_helligdager_finnes"'));
 sjekk('neste helligdager vises med navn', /Neste: [^<]*(juledag|nyttårsdag|påskedag|Skjærtorsdag|Langfredag|mai|himmelfartsdag|pinsedag)/.test(html));
 sjekk('antallsregel-kortet med del, markør og mal', html.includes('data-amendo-del="antallregler"') && html.includes('name="antall_regler_finnes"') && html.includes('<template id="antall-regel-mal">'));
@@ -136,6 +147,8 @@ sjekk('Slett regel: raden borte og regnes som en endring', !d.querySelector('inp
 d.querySelector('#legg-til-avdeling').click();
 const nyAvd = [...d.querySelectorAll('input[name$="[bestillingsvindu_dager]"]')].at(-1);
 sjekk('ny avdeling: «Kan bestilles inntil» 60', nyAvd?.value === '60' && /avdelinger\[\d+\]\[bestillingsvindu_dager\]/.test(nyAvd.name), nyAvd?.name);
+const nyKlar = [...d.querySelectorAll('input[name$="[klargjoring_minutter]"]')].at(-1);
+sjekk('ny avdeling: «Klargjøringstid» 15, samme indeks som resten', nyKlar?.value === '15' && nyKlar.name.replace('[klargjoring_minutter]', '') === nyAvd?.name.replace('[bestillingsvindu_dager]', ''), [nyKlar?.name, nyAvd?.name]);
 
 await sett({ amendo_avdelinger: null, amendo_kategori_regler: null, amendo_antall_regler: null, amendo_stengt_helligdager: null });
 ferdig();
