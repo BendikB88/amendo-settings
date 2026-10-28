@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.22
+ * Version: 1.4.23
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.22');
+define('AMENDO_SETTINGS_VERSION', '1.4.23');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -27,6 +27,7 @@ require_once AMENDO_SETTINGS_PATH . 'includes/lagring.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/kategorivelger.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/leveringsregler.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/helsebygget.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/mal.php';
 // Sist: laster modulene som er på, og de kan bruke alt over.
 require_once AMENDO_SETTINGS_PATH . 'includes/moduler.php';
 
@@ -127,6 +128,9 @@ add_action('admin_post_amendo_save_settings', function() {
     // Kasse- og revaliderings-secret — se includes/hemmeligheter.php.
     amendo_hemmeligheter_lagre($_POST);
 
+    // Feltene til den felles malen (1.4.23) — se includes/mal.php.
+    amendo_mal_lagre($_POST);
+
     if (isset($_POST['frontend_url'])) {
         update_option('amendo_frontend_url', amendo_frontend_url_rens($_POST['frontend_url']));
     }
@@ -223,6 +227,8 @@ add_action('admin_post_amendo_save_settings', function() {
                 'tidsluke'         => !empty($avd['tidsluke']) ? intval($avd['tidsluke']) : null,
                 'maks_per_tidsluke'=> !empty($avd['maks_per_tidsluke']) ? intval($avd['maks_per_tidsluke']) : null,
                 'bestillingsvindu_dager' => amendo_bestillingsvindu($avd),
+                // 1.4.23 — se includes/mal.php.
+                'inngang'          => amendo_inngang_rens($avd['inngang'] ?? null),
             ];
         }
         update_option('amendo_avdelinger', json_encode($avdelinger));
@@ -363,6 +369,8 @@ function amendo_get_leveringsregler() {
             'maks_per_tidsluke_resolved'=> $avd['maks_per_tidsluke'] ?? $global_maks,
             // 1.4.18 — se includes/leveringsregler.php. Alltid med, standard 60.
             'bestillingsvindu_dager'    => amendo_bestillingsvindu($avd),
+            // 1.4.23 — se includes/mal.php. Alltid med, standard 'nettbutikk'.
+            'inngang'                   => amendo_avdeling_inngang($avd),
         ]);
     }, $avdelinger_raw);
 
@@ -386,7 +394,7 @@ function amendo_get_leveringsregler() {
             'tidsluke_minutter'  => intval(get_option('amendo_levering_tidsluke', 60)),
             'prosesseringstid'   => intval(get_option('amendo_levering_prosesseringstid', 2)),
             'har_wolt'           => !empty(get_option('amendo_wolt_api_key', '')),
-        ],
+        ] + amendo_mal_levering_regler(), // 1.4.23: min_timer, luke_minutter, krever_gruppe — se includes/mal.php.
         'kategori_regler' => array_map(function($r) {
             // 1.4.18: navnet, til «Kaker trenger 3 virkedager». null når slettet.
             return $r + ['kategori_navn' => amendo_leveringsregler_kategorinavn($r['kategori_id'] ?? 0)];
@@ -438,6 +446,10 @@ function amendo_get_settings() {
         // Nøklene til modulene som er på — se includes/moduler.php.
         'moduler'    => amendo_moduler_aktive(),
     ];
+
+    // Den felles malen (1.4.23): moduler_kjente og de nye feltene, tomme til
+    // de fylles ut — se includes/mal.php.
+    $svar = amendo_mal_settings($svar);
 
     // Modulene som er på legger til sine felter her.
     return apply_filters('amendo_settings_svar', $svar);
@@ -556,7 +568,10 @@ function amendo_settings_page() {
                             <?php if ($butikk_logo): ?><button type="button" class="amendo-btn-danger" id="remove-logo">Fjern</button><?php endif; ?>
                         </div>
                     </div>
+                    <?php amendo_mal_logo_felt(); // 1.4.23 — se includes/mal.php ?>
                 </div>
+
+                <?php amendo_mal_butikk_kort(); ?>
 
                 <div class="amendo-card">
                     <h2>Frontend</h2>
@@ -593,6 +608,7 @@ function amendo_settings_page() {
                         <p class="field-help">Brukes til bakgrunner og sekundære elementer</p>
                     </div>
                 </div>
+                <?php amendo_mal_tema_felt(); ?>
             </div>
 
             <!-- KONTAKT -->
@@ -756,11 +772,13 @@ function amendo_settings_page() {
                                             <span class="toggle-slider"></span>
                                         </label>
                                     </div>
+                                    <?php amendo_avdeling_inngang_felt($i, $avd); // 1.4.23 ?>
                                 </div>
                             </div>
                         </div>
                         <?php endforeach; ?>
                     </div>
+                    <template id="avdeling-inngang-mal"><?php amendo_avdeling_inngang_felt('__i__', []); ?></template>
                     <button type="button" class="amendo-btn-secondary" id="legg-til-avdeling">+ Legg til avdeling</button>
                 </div>
             </div>
@@ -822,6 +840,7 @@ function amendo_settings_page() {
                     </div>
                     <input type="hidden" name="stengt_helligdager_finnes" value="1">
                     <?php amendo_helligdager_felt(); ?>
+                    <?php amendo_mal_henting_felt(); // 1.4.23 ?>
                     <div class="amendo-field" data-amendo-del="stengte">
                         <?php amendo_lagring_felt('stengte'); ?>
                         <label>Stengte perioder</label>
@@ -881,6 +900,7 @@ function amendo_settings_page() {
                             <input type="number" name="levering_prosesseringstid" value="<?php echo esc_attr(get_option('amendo_levering_prosesseringstid','2')); ?>" min="0" max="30">
                         </div>
                     </div>
+                    <?php amendo_mal_levering_felt(); // 1.4.23 ?>
                 </div>
 
                 <div class="amendo-card">

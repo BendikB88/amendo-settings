@@ -468,3 +468,6 @@
 .antall-regel-linje input[type="number"] { width: 80px; }
 .antall-regel-unntak { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: normal; text-transform: none; letter-spacing: 0; }
 .amendo-lengste-tid { background: #f9fafb; border-left: 3px solid #b45309; padding: 8px 12px; }
+
+/* Felles mal og Wolt (1.4.23) */
+.wolt-rad input[type="text"], .wolt-rad select { width: 100%; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }

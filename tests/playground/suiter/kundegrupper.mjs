@@ -61,7 +61,7 @@ const KUNDER = [
 const LISTE = { 4: 40, 5: 40, 6: 40, 7: 40, 19: 50 };
 
 await opt({ amendo_kasse_secret: SECRET });
-await klargjor({ moduler: ['b2b'], tellix: '1', grupper: GRUPPER, kunder: KUNDER, helsebygget: LISTE, store_groups: null, kundegrupper: null, kundegrupper_ny: null, faktura: null, sov: null, kast: null, api_feil: null, side: null, liste_slett: true, nullstill: true });
+await klargjor({ moduler: ['b2b', 'helsebygget'], tellix: '1', grupper: GRUPPER, kunder: KUNDER, helsebygget: LISTE, store_groups: null, kundegrupper: null, kundegrupper_ny: null, faktura: null, sov: null, kast: null, api_feil: null, side: null, liste_slett: true, nullstill: true });
 await bruker('nav@example.com', { billing_phone: '90000001' });
 
 // ── Rabatten følger Tellix ──────────────────────────────────────────────────
@@ -103,7 +103,8 @@ sjekk('valgene: Nettbutikken / Bare Helsebygget / Ingen rabatt på nett', rad(ht
 sjekk('antall kunder fra Tellix', />1<\/td>/.test(rad(html, 4).match(/kundegruppe-antall">\d+<\/td>/)?.[0] || ''), rad(html, 4).match(/kundegruppe-antall">\d+/)?.[0]);
 sjekk('gruppe uten kunder er skjult, med knappen «Vis grupper uten kunder»', /kundegruppe-tom" data-gruppe="8" hidden/.test(t) && t.includes('Vis grupper uten kunder (1)') && !/data-gruppe="4" hidden/.test(t));
 sjekk('beskjed om at tabellen ikke er lagret', t.includes('amendo-kundegrupper-ikke-lagret'));
-sjekk('de gamle kortene er borte', !html.includes('id="b2b-tellix"') && !html.includes('helsebygget_grupper[verdi]') && !html.includes('kundegruppe_config[') && !html.includes('Faktura og rettigheter per kundegruppe'));
+// id="b2b-tellix" er siden 1.4.22 kortet «Tellix-kobling» (b2b-tellix-kunder.php); det gamle hadde overskriften under.
+sjekk('de gamle kortene er borte', !html.includes('<h2>Kundegrupper fra Tellix</h2>') && !html.includes('helsebygget_grupper[verdi]') && !html.includes('kundegruppe_config[') && !html.includes('Faktura og rettigheter per kundegruppe'));
 let sm = await side('shop_manager');
 sjekk('butikkadministrator: «Hvor gjelder rabatten» er tekst, ikke valg', !/name="kundegrupper\[rader\]\[4\]\[gjelder\]"/.test(sm) && rad(sm, 4).includes('Bare Helsebygget') && /name="kundegrupper\[rader\]\[4\]\[faktura\]"/.test(sm));
 

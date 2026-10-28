@@ -2,7 +2,8 @@
 /**
  * B2B → Helsebygget (1.4.17): ansatte med personlige PIN-koder til
  * Helsebygget-admin i frontenden, og loggen over endringer i sortimentet.
- * Del av B2B-modulen. PIN, token og ruter: includes/helsebygget.php (kjernen,
+ * Lastes av modulen helsebygget (1.4.23, includes/moduler/helsebygget.php),
+ * ikke lenger av B2B. PIN, token og ruter: includes/helsebygget.php (kjernen,
  * fordi /helsebygget-produkter er en kjernerute).
  *
  * Handlingene (legg til, ny PIN, slett) er et eget skjema utenfor
@@ -40,7 +41,9 @@ add_action('admin_post_amendo_hb_ansatt', function() {
     if ($resultat) {
         set_transient('amendo_hb_ny_pin_' . get_current_user_id(), ['navn' => $resultat[0]['navn'], 'pin' => $resultat[1]], 10 * MINUTE_IN_SECONDS);
     }
-    wp_redirect(admin_url('admin.php?page=amendo-settings&hb=' . $melding . '#b2b-helsebygget'));
+    // Underfanen i B2B, eller egen fane når B2B er av (1.4.23, includes/moduler/helsebygget.php).
+    $anker = function_exists('amendo_b2b_soknader') ? '#b2b-helsebygget' : '#helsebygget';
+    wp_redirect(admin_url('admin.php?page=amendo-settings&hb=' . $melding . $anker));
     exit;
 });
 

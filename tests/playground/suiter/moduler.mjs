@@ -93,7 +93,8 @@ sjekk('/settings: uten tabell er den {}', t.kundegruppe_config_raa === '{}', t.k
 
 // ── Søknader ────────────────────────────────────────────────────────────────
 console.log('\nSøknader');
-await klargjor({ aktive: ['b2b'], kundegrupper: null, slett_brukere: true });
+// Med Helsebygget (egen modul fra 1.4.23), så underfanen finnes i jsdom-sjekken nederst.
+await klargjor({ aktive: ['b2b', 'helsebygget'], kundegrupper: null, slett_brukere: true });
 const venter = { _b2b_status: 'venter', _b2b_sokt: '2026-10-01T08:00:00Z' };
 await bruker('godkjenn@example.com', { ...venter, _orgnr_soknad: '923 207 074', billing_company: 'Garçon AS', first_name: 'Kari', _tellixGroupId: '14' });
 await bruker('avvis@example.com', { ...venter, _orgnr_soknad: '998877665', billing_company: '<script>alert(1)</script>' });

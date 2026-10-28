@@ -34,6 +34,8 @@
  *
  * Helsebygget (1.4.17): ansatte med personlige PIN-koder og loggen over
  * endringer i sortimentet — se b2b-helsebygget.php og includes/helsebygget.php.
+ * Fra 1.4.23 er det en egen modul (`helsebygget`, includes/moduler/helsebygget.php)
+ * som laster den fila. Underfanen Helsebygget vises her bare når den er på.
  */
 
 if (!defined('ABSPATH')) exit;
@@ -197,7 +199,9 @@ add_action('amendo_admin_paneler', function() {
         <div class="amendo-undernav" role="tablist">
             <button type="button" class="amendo-undertab active" data-under="bedrifter">Bedrifter</button>
             <button type="button" class="amendo-undertab" data-under="kundegrupper">Kundegrupper</button>
+            <?php if (function_exists('amendo_hb_kort')): ?>
             <button type="button" class="amendo-undertab" data-under="helsebygget">Helsebygget</button>
+            <?php endif; ?>
         </div>
 
         <div class="amendo-underpanel active" data-under-panel="bedrifter">
@@ -284,9 +288,13 @@ add_action('amendo_admin_paneler', function() {
             <?php amendo_kg_kort(); ?>
         </div>
 
+        <?php // Modulen helsebygget (1.4.23) — se includes/moduler/helsebygget.php. ?>
+        <?php if (function_exists('amendo_hb_kort')): ?>
         <div class="amendo-underpanel" data-under-panel="helsebygget">
+            <?php amendo_hb_navn_kort(); ?>
             <?php amendo_hb_kort(); ?>
         </div>
+        <?php endif; ?>
     </div>
     <?php
 });
@@ -294,4 +302,3 @@ add_action('amendo_admin_paneler', function() {
 require_once __DIR__ . '/b2b-tellix.php';
 require_once __DIR__ . '/b2b-tellix-kunder.php';
 require_once __DIR__ . '/b2b-kundegrupper.php';
-require_once __DIR__ . '/b2b-helsebygget.php';

@@ -25,7 +25,7 @@ const nyPin = html => html.match(/class="amendo-pin">(\d{6})</)?.[1];
 
 const ids = await get('/amendo-test/v1/setup');
 await get('/amendo-test/v1/v1417-nullstill');
-await opt({ amendo_kasse_secret: SECRET, amendo_moduler: JSON.stringify(['b2b']), amendo_helsebygget_produkter: JSON.stringify([ids.brod]), amendo_helsebygget_skjulte_varianter: null });
+await opt({ amendo_kasse_secret: SECRET, amendo_moduler: JSON.stringify(['b2b', 'helsebygget']), amendo_helsebygget_produkter: JSON.stringify([ids.brod]), amendo_helsebygget_skjulte_varianter: null });
 
 // ── Ansatte i fanen ─────────────────────────────────────────────────────────
 console.log('Ansatte i B2B → Helsebygget');
