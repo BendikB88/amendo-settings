@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.24
+ * Version: 1.4.25
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.24');
+define('AMENDO_SETTINGS_VERSION', '1.4.25');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -28,6 +28,7 @@ require_once AMENDO_SETTINGS_PATH . 'includes/kategorivelger.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/leveringsregler.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/helsebygget.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/mal.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/instagram.php';
 // Sist: laster modulene som er på, og de kan bruke alt over.
 require_once AMENDO_SETTINGS_PATH . 'includes/moduler.php';
 
@@ -130,6 +131,9 @@ add_action('admin_post_amendo_save_settings', function() {
 
     // Feltene til den felles malen (1.4.23) — se includes/mal.php.
     amendo_mal_lagre($_POST);
+
+    // Instagram-token (1.4.25) — se includes/instagram.php.
+    amendo_instagram_lagre($_POST);
 
     if (isset($_POST['frontend_url'])) {
         update_option('amendo_frontend_url', amendo_frontend_url_rens($_POST['frontend_url']));
@@ -576,6 +580,8 @@ function amendo_settings_page() {
                 </div>
 
                 <?php amendo_mal_butikk_kort(); ?>
+
+                <?php amendo_instagram_kort(); // 1.4.25 ?>
 
                 <div class="amendo-card">
                     <h2>Frontend</h2>
