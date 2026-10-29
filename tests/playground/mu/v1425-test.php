@@ -46,7 +46,7 @@ add_action('rest_api_init', function() {
         $ok = true;
         foreach ($req->get_json_params() ?: [] as $opt => $v) {
             if ($opt === 'cache_tom') {
-                foreach (['amendo_instagram_svar', 'amendo_instagram_pause', 'amendo_instagram_forny_pause'] as $t) delete_transient($t);
+                foreach (['amendo_instagram_svar30', 'amendo_instagram_pause', 'amendo_instagram_forny_pause'] as $t) delete_transient($t);
                 continue;
             }
             $ok = amendo_test_skriv_sikkert($opt, $v === null ? null : (is_array($v) ? wp_json_encode($v) : (string) $v)) && $ok;
@@ -109,8 +109,8 @@ add_action('rest_api_init', function() {
             'fornyet'     => get_option('amendo_instagram_fornyet', null),
             'status'      => get_option('amendo_instagram_status', null),
             'siste'       => get_option('amendo_instagram_siste', null),
-            'cache'       => get_transient('amendo_instagram_svar'),
-            'cache_tid'   => (int) get_option('_transient_timeout_amendo_instagram_svar', 0) - time(),
+            'cache'       => get_transient('amendo_instagram_svar30'),
+            'cache_tid'   => (int) get_option('_transient_timeout_amendo_instagram_svar30', 0) - time(),
             'pause'       => get_transient('amendo_instagram_pause'),
             'sb'          => $sb,
             'sb_fornyet'  => (int) get_option('amendo_test_sbi_fornyet', 0),
@@ -133,7 +133,7 @@ add_action('rest_api_init', function() {
             'token'   => get_option('amendo_instagram_token', null),
             'utloper' => get_option('amendo_instagram_utloper', null),
             'fornyet' => get_option('amendo_instagram_fornyet', null),
-            'cache'   => get_transient('amendo_instagram_svar'),
+            'cache'   => get_transient('amendo_instagram_svar30'),
         ];
     });
 

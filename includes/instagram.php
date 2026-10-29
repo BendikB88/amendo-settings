@@ -6,7 +6,12 @@
  *
  * - Kontoen er `ig_handle` fra forsiden (Amendo, ellers ACF), ellers
  *   «Instagram» under Butikk → Sosiale medier. Samme rekkefølge som emmk.
- * - De siste 9 innleggene. `type` er 'bilde', 'video' eller 'karusell'. En
+ * - `?antall=1–30`, standard 9 (som i 1.4.25). Utenfor 1–30 settes det til
+ *   nærmeste grense; tekst eller desimaltall gir 9. Det hentes og mellomlagres
+ *   alltid 30 innlegg, i ett kall, og svaret kuttes til antall — så ulike
+ *   antall deler mellomlageret og gir aldri flere kall til Instagram.
+ *   (Mellomlageret har et nytt navn i 1.4.26, så et gammelt med 9 brukes ikke.)
+ * - `type` er 'bilde', 'video' eller 'karusell'. En
  *   video gir miniatyrbildet (thumbnail_url), aldri .mp4. En karusell gir
  *   første bilde, eller miniatyrbildet når det første er en video. Innlegg uten
  *   et https-bilde hoppes over.
@@ -41,7 +46,8 @@
 
 if (!defined('ABSPATH')) exit;
 
-const AMENDO_INSTAGRAM_ANTALL     = 9;
+const AMENDO_INSTAGRAM_ANTALL     = 9;  // standard for ?antall
+const AMENDO_INSTAGRAM_MAKS       = 30; // hentes og mellomlagres
 const AMENDO_INSTAGRAM_CACHE      = 3600;
 const AMENDO_INSTAGRAM_PAUSE      = 300;
 const AMENDO_INSTAGRAM_FORNY_DAGER = 50;
@@ -54,8 +60,16 @@ add_action('rest_api_init', function() {
     ]);
 });
 
-function amendo_instagram_rest() {
-    return new WP_REST_Response(amendo_instagram_svar(), 200);
+function amendo_instagram_rest(WP_REST_Request $req) {
+    $svar = amendo_instagram_svar();
+    $svar['innlegg'] = array_slice($svar['innlegg'], 0, amendo_instagram_antall($req->get_param('antall')));
+    return new WP_REST_Response($svar, 200);
+}
+
+/** ?antall: heltall 1–30 (utenfor = nærmeste grense), ellers 9. */
+function amendo_instagram_antall($v) {
+    if (!is_scalar($v) || !preg_match('/^\s*-?\d+\s*$/', (string) $v)) return AMENDO_INSTAGRAM_ANTALL;
+    return max(1, min(AMENDO_INSTAGRAM_MAKS, (int) trim((string) $v)));
 }
 
 // ── Kontoen ─────────────────────────────────────────────────────────────────
@@ -132,7 +146,7 @@ function amendo_instagram_sb_utloper($expires) {
  */
 function amendo_instagram_kilde($handle, $forny = true) {
     $felt = 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,children%7Bmedia_type,media_url,thumbnail_url%7D';
-    $grense = '&limit=' . (AMENDO_INSTAGRAM_ANTALL + 3);
+    $grense = '&limit=' . (AMENDO_INSTAGRAM_MAKS + 3);
 
     $rad = amendo_instagram_sb_rad($handle);
     if ($rad && $forny && amendo_instagram_sb_forny($rad)) $rad = amendo_instagram_sb_rad($handle) ?: $rad;
@@ -198,7 +212,7 @@ function amendo_instagram_hent(array $kilde) {
     foreach ($d['data'] as $p) {
         $i = is_array($p) ? amendo_instagram_innlegg($p) : null;
         if ($i) $ut[] = $i;
-        if (count($ut) >= AMENDO_INSTAGRAM_ANTALL) break;
+        if (count($ut) >= AMENDO_INSTAGRAM_MAKS) break;
     }
     update_option('amendo_instagram_status', ['ok' => time(), 'feil' => null, 'kode' => 200, 'kilde' => $kilde['kilde']], false);
     return $ut;
@@ -241,7 +255,7 @@ function amendo_instagram_svar() {
     $handle = amendo_instagram_handle();
     if ($handle === '') return ['brukernavn' => null, 'innlegg' => [], 'oppdatert' => null, 'reserve' => false];
 
-    $cache = get_transient('amendo_instagram_svar');
+    $cache = get_transient('amendo_instagram_svar30');
     if (is_array($cache) && ($cache['brukernavn'] ?? null) === $handle) return $cache;
 
     $reserve = function() use ($handle) {
@@ -259,13 +273,13 @@ function amendo_instagram_svar() {
     }
 
     $svar = ['brukernavn' => $handle, 'innlegg' => $innlegg, 'oppdatert' => gmdate('c'), 'reserve' => false];
-    set_transient('amendo_instagram_svar', $svar, AMENDO_INSTAGRAM_CACHE);
+    set_transient('amendo_instagram_svar30', $svar, AMENDO_INSTAGRAM_CACHE);
     update_option('amendo_instagram_siste', $svar, false);
     return $svar;
 }
 
 function amendo_instagram_tom_cache() {
-    delete_transient('amendo_instagram_svar');
+    delete_transient('amendo_instagram_svar30');
     delete_transient('amendo_instagram_pause');
 }
 

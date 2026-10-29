@@ -8,8 +8,8 @@ const tilstand = () => get('/amendo-test/v1/v1425-tilstand');
 const lagre = (post, rolle = 'admin') => get('/amendo-test/v1/v1425-lagre', { post, rolle });
 const sbi = kontoer => get('/amendo-test/v1/v1425-sbi', { kontoer });
 const side = async (rolle = 'admin') => (await fetch(B + '/amendo-test/v1/v1425-side&rolle=' + rolle)).text();
-const feed = async () => {
-  const r = await fetch(B + '/amendo-settings/v1/instagram');
+const feed = async (antall) => {
+  const r = await fetch(B + '/amendo-settings/v1/instagram' + (antall === undefined ? '' : '&antall=' + encodeURIComponent(antall)));
   const tekst = await r.text();
   let json = null; try { json = JSON.parse(tekst); } catch {}
   return { status: r.status, json, tekst };
@@ -81,15 +81,46 @@ sjekk('karusell med video først: miniatyrbildet til videoen', inn[3]?.type === 
 sjekk('video uten miniatyrbilde og bilde over http hoppes over', !inn.some(i => /\/(5|6)\.jpg|\.mp4/.test(i.bilde)) && inn[4]?.bilde === bilde(7), inn.map(i => i.bilde));
 sjekk('uten bildetekst: tekst ""', inn[4]?.tekst === '', inn[4]);
 sjekk('9 av 10 gyldige: det tiende (nr 12) er ikke med', inn[8]?.bilde === bilde(11), inn[8]);
-sjekk('ett kall: graph.instagram.com/me/media med tokenet, limit 12', s.kall.length === 1 && s.kall[0].vert === 'graph.instagram.com' && s.kall[0].sti === '/me/media' && s.kall[0].token === EGET && s.kall[0].limit === '12', s.kall);
+sjekk('ett kall: graph.instagram.com/me/media med tokenet, limit 33 (30 + margin, 1.4.26)', s.kall.length === 1 && s.kall[0].vert === 'graph.instagram.com' && s.kall[0].sti === '/me/media' && s.kall[0].token === EGET && s.kall[0].limit === '33', s.kall);
 sjekk('ingen fornying av et token lagt inn for under et døgn siden', !s.kall.some(k => k.sti === '/refresh_access_token'));
 sjekk('tokenet er ikke i svaret', lekker(r.tekst, EGET).length === 0);
-sjekk('mellomlagret i 1 time', s.cache?.innlegg?.length === 9 && s.cache_tid > 3500 && s.cache_tid <= 3600, s.cache_tid);
-sjekk('siste gode svar lagret', s.siste?.innlegg?.length === 9 && s.siste.brukernavn === 'garconoslo');
+sjekk('mellomlagret i 1 time, alle de 10 gyldige (inntil 30)', s.cache?.innlegg?.length === 10 && s.cache_tid > 3500 && s.cache_tid <= 3600, [s.cache?.innlegg?.length, s.cache_tid]);
+sjekk('siste gode svar lagret', s.siste?.innlegg?.length === 10 && s.siste.brukernavn === 'garconoslo');
 sjekk('status: tid og HTTP-kode, ikke tokenet', s.status?.kode === 200 && s.status.kilde === 'amendo' && lekker(JSON.stringify(s.status), EGET).length === 0, s.status);
 r = await feed();
 s = await tilstand();
 sjekk('neste forespørsel: fra mellomlageret, ingen nye kall', r.json?.innlegg?.length === 9 && s.kall.length === 1, s.kall.length);
+
+// ── ?antall (1.4.26) ────────────────────────────────────────────────────────
+console.log('\n?antall=1–30');
+const STOR = Array.from({ length: 35 }, (_, i) => ({ id: 's' + (i + 1), media_type: 'IMAGE', media_url: bilde('s' + (i + 1)), permalink: `https://www.instagram.com/p/S${i + 1}/`, caption: 'S' + (i + 1), timestamp: '2026-10-01T10:00:00+0000' }));
+await sett({ amendo_test_ig: { ...IG, media: { kode: 200, svar: { data: STOR } } }, amendo_test_ig_kall: null, cache_tom: true });
+r = await feed();
+sjekk('uten antall: 9, som før', r.status === 200 && r.json?.innlegg?.length === 9 && r.json.innlegg[8].bilde === bilde('s9'), r.json?.innlegg?.length);
+sjekk('… svaret har de samme fire feltene', JSON.stringify(Object.keys(r.json || {})) === '["brukernavn","innlegg","oppdatert","reserve"]', Object.keys(r.json || {}));
+s = await tilstand();
+sjekk('30 hentet og mellomlagret i ett kall (limit 33)', s.kall.length === 1 && s.kall[0].limit === '33' && s.cache?.innlegg?.length === 30 && s.cache.innlegg[29].bilde === bilde('s30'), [s.kall.length, s.cache?.innlegg?.length]);
+const antall = {};
+for (const a of ['30', '1', '15', '0', '-5', '31', '100', 'abc', '7.5', '', ' 12 ']) antall[a] = (await feed(a)).json?.innlegg?.length;
+sjekk('antall=30: 30, i rekkefølge', antall['30'] === 30);
+sjekk('antall=1 og 15', antall['1'] === 1 && antall['15'] === 15, antall);
+sjekk('under 1 (0, -5): 1', antall['0'] === 1 && antall['-5'] === 1, antall);
+sjekk('over 30 (31, 100): 30', antall['31'] === 30 && antall['100'] === 30, antall);
+sjekk('tekst, desimaltall og tomt: 9', antall.abc === 9 && antall['7.5'] === 9 && antall[''] === 9, antall);
+sjekk('mellomrom rundt tallet: godtas (« 12 » = 12)', antall[' 12 '] === 12, antall);
+r = await feed('5');
+sjekk('de første 5 er de samme som de første 5 av 30', JSON.stringify(r.json?.innlegg?.map(i => i.bilde)) === JSON.stringify(STOR.slice(0, 5).map(m => m.media_url)));
+s = await tilstand();
+sjekk('alle antallene fra samme mellomlager: fortsatt ett kall', s.kall.length === 1, s.kall.length);
+await sett({ amendo_test_ig: { ...IG, media: { kode: 500, svar: {} } }, cache_tom: true });
+r = await feed('20');
+sjekk('Instagram feiler: forrige gode svar, kuttet til antall=20', r.json?.reserve === true && r.json.innlegg.length === 20, [r.json?.reserve, r.json?.innlegg?.length]);
+r = await feed();
+sjekk('… og 9 uten antall', r.json?.reserve === true && r.json.innlegg.length === 9);
+await sett({ amendo_test_ig: IG, amendo_test_ig_kall: null, cache_tom: true });
+r = await feed('30');
+sjekk('færre enn antall hos Instagram: alle de gyldige (10)', r.json?.reserve === false && r.json.innlegg.length === 10, r.json?.innlegg?.length);
+await sett({ amendo_test_ig_kall: null, cache_tom: true });
 
 // ── Fornying av eget token ──────────────────────────────────────────────────
 console.log('\nFornying og ny utløpsdato');
@@ -128,7 +159,7 @@ s = await tilstand();
 sjekk('HTTP 500: forrige gode svar med reserve: true', r.status === 200 && r.json?.reserve === true && r.json.innlegg.length === 9 && r.json.brukernavn === 'garconoslo' && r.json.innlegg[0].bilde === bilde(1), r.json);
 sjekk('… «oppdatert» er tiden det gode svaret ble hentet', r.json?.oppdatert === s.siste?.oppdatert);
 sjekk('… status med feiltid og HTTP 500, ikke tokenet', s.status?.kode === 500 && s.status.feil > 0 && s.status.ok > 0 && lekker(JSON.stringify(s.status), FORNYET).length === 0, s.status);
-sjekk('… feilen mellomlagres ikke som et godt svar', s.cache === false && s.siste?.innlegg?.length === 9);
+sjekk('… feilen mellomlagres ikke som et godt svar', s.cache === false && s.siste?.innlegg?.length === 10);
 r = await feed();
 s = await tilstand();
 sjekk('pause i 5 minutter: neste forespørsel går ikke til Instagram', r.json?.reserve === true && s.kall.length === 1, s.kall.length);
@@ -165,7 +196,7 @@ sjekk('… eller fjerne det', l.token === FORNYET);
 l = await lagre({ butikk_navn: 'Test', instagram_token: 'IGAAutenmarkor' + 'q'.repeat(40) });
 sjekk('lagring uten markøren: urørt', l.token === FORNYET);
 l = await lagre({ instagram_finnes: '1', instagram_token: '' });
-sjekk('tomt felt: urørt, og mellomlageret står', l.token === FORNYET && l.cache?.innlegg?.length === 9);
+sjekk('tomt felt: urørt, og mellomlageret står', l.token === FORNYET && l.cache?.innlegg?.length === 10);
 l = await lagre({ instagram_finnes: '1', instagram_token: 'for kort' });
 sjekk('ugyldig token (for kort, mellomrom inni er fjernet): urørt', l.token === FORNYET);
 l = await lagre({ instagram_finnes: '1', instagram_token: EGET });
