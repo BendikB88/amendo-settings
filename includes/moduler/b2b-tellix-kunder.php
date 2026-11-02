@@ -17,7 +17,8 @@
  *      Og har lista ingen org.nr i det hele tatt (feltnavnet er ikke bekreftet,
  *      se amendo_tellix_orgnr_fra_rad), er et bom ikke et bevis: også valg.
  *      Kan lista ikke hentes, opprettes ingenting.
- *   2. Ingen treff → opprett kunden i Tellix med kundegruppen admin valgte.
+ *   2. Ingen treff → opprett kunden i Tellix. Kundegruppe er valgfritt
+ *      (1.4.27): faktura krever ikke gruppe, se amendo_faktura_for_bruker().
  *   3. `_tellixCustomerId`, `_tellixCustomerUuId` og `_tellixGroupId` skrives
  *      med en gang, så faktura (enabled_customer_group_<id> i gatewayen)
  *      virker.
@@ -35,10 +36,12 @@
  * tom, brukes innstillingene til garcon-tellix-b2b-sync hvis pluginen har
  * lagret dem (garcon.no), i miljøet den står på.
  *
- * ⚠⚠ Kundegruppen sendes som `customerGroupId`, navnet feltet har i
- * kundelista. Sync-pluginen sendte aldri gruppe, så det er ikke prøvd mot
- * Tellix. Derfor hentes lista på nytt etter opprettelsen: har Tellix en
- * annen gruppe på kunden, er det den som skrives, og admin får beskjed.
+ * ⚠⚠ Kundegruppen sendes som `customerGroupId`, men Tellix IGNORERER den
+ * (bekreftet mot ekte Tellix og API-dokumentasjonen 29.10.2026: gruppen kan
+ * bare leses, i v2/customer/list og v2/customer/group/list). Den må settes i
+ * Tellix backoffice. Derfor hentes lista på nytt etter opprettelsen: har
+ * Tellix en annen gruppe på kunden, er det den som skrives, og admin får
+ * beskjed. Gruppen styrer bare rabatt og levering, ikke faktura (1.4.27).
  *
  * ⚠ Ingen kundedata, Tellix-svar eller innlogging i loggen — bare antall.
  */
@@ -321,7 +324,7 @@ function amendo_b2b_tellix_kjor(array $grupper, array $valg = []) {
                 if ($k['uuid'] !== '') update_user_meta($id, '_tellixCustomerUuId', $k['uuid']);
                 if ($k['gruppe_id'] !== null && $k['gruppe_id'] !== (int) $r['gruppe']) {
                     update_user_meta($id, '_tellixGroupId', (string) $k['gruppe_id']);
-                    $melding .= ' ⚠ Tellix lagret kunden med ' . amendo_b2b_tellix_gruppenavn($k['gruppe_id']) . ', ikke ' . amendo_b2b_tellix_gruppenavn($r['gruppe']) . '. Endre gruppen i Tellix.';
+                    $melding .= ' ⚠ Tellix lagret kunden med ' . amendo_b2b_tellix_gruppenavn($k['gruppe_id']) . ', ikke ' . amendo_b2b_tellix_gruppenavn($r['gruppe']) . '. Sett gruppen i Tellix backoffice: den kan ikke settes herfra. Gruppen styrer rabatt og levering; faktura virker uten.';
                 }
             }
             if ((string) get_user_meta($id, '_tellixCustomerUuId', true) === '') {
@@ -375,9 +378,8 @@ function amendo_b2b_tellix_en($id, $gruppe, array $valg, array &$liste) {
     if (empty($valg['ny']) && strlen($orgnr) === 9 && !amendo_b2b_tellix_liste_har_orgnr($liste)) {
         return amendo_b2b_tellix_status($id, 'valg', 'Kundelista fra Tellix har ikke org.nr, så vi kan ikke se om bedriften finnes der fra før. Søk etter ' . $orgnr . ' i Tellix: finnes den, koble kunden der; ellers trykk «Opprett ny».', $gruppe);
     }
-    if ($gruppe === null) {
-        return amendo_b2b_tellix_status($id, 'feil', 'Fant ikke kunden i Tellix. Velg kundegruppe og trykk «Prøv igjen» for å opprette den.', null);
-    }
+    // 1.4.27: ingen gruppe valgt er greit. Faktura krever ikke gruppe, og
+    // Tellix tar uansett ikke imot gruppe fra oss.
     $t = amendo_b2b_tellix_tilgang();
     if (!$t) return amendo_b2b_tellix_status($id, 'feil', 'Fant ikke kunden i Tellix, og Tellix-tilgangen for å opprette kunder er ikke satt opp (B2B → Bedrifter → Tellix-tilgang).', $gruppe);
 
@@ -401,7 +403,7 @@ function amendo_b2b_tellix_en($id, $gruppe, array $valg, array &$liste) {
     $r2 = amendo_b2b_tellix_post($t, 'customer/update/' . rawurlencode((string) $kid), ['data' => $oppd]);
     $merk = (is_wp_error($r2) || $r2['kode'] !== 200) ? ' ⚠ Oppdateringen etter opprettelsen feilet: sjekk adresse og org.nr på kunden i Tellix.' : '';
     return ['status' => 'opprettet', 'gruppe' => (int) $gruppe,
-        'melding' => 'Opprettet i Tellix som kunde ' . $kid . ' med ' . amendo_b2b_tellix_gruppenavn((int) $gruppe) . '.' . $merk];
+        'melding' => 'Opprettet i Tellix som kunde ' . $kid . ((int) $gruppe > 0 ? ' med ' . amendo_b2b_tellix_gruppenavn((int) $gruppe) : ' uten kundegruppe') . '.' . $merk];
 }
 
 function amendo_b2b_tellix_koblet($id, array $k, $gruppe, $via) {
@@ -587,7 +589,7 @@ function amendo_b2b_tellix_kort() {
     ?>
     <div class="amendo-card" id="b2b-tellix">
         <h2>Tellix-kobling<?php echo $apne ? ' (' . count($apne) . ')' : ''; ?></h2>
-        <p class="amendo-desc">Når en søknad godkjennes, kobles kunden til Tellix-kunden med samme org.nr (ellers e-post), eller opprettes i Tellix med kundegruppen du velger. Faktura virker når kunden er koblet. Kunder som ble godkjent før dette, kobles i <a href="<?php echo esc_url(admin_url('users.php?amendo_tellix_ukoblet=1')); ?>">Brukere → Uten Tellix-kobling</a> med massehandlingen «Koble til Tellix».</p>
+        <p class="amendo-desc">Når en søknad godkjennes, kobles kunden til Tellix-kunden med samme org.nr (ellers e-post), eller opprettes i Tellix med kundegruppen du velger. Faktura virker når kunden er koblet og er godkjent bedrift (eller har org.nr i Tellix), uten kundegruppe, med mindre «Ikke faktura» er satt. Kunder som ble godkjent før dette, kobles i <a href="<?php echo esc_url(admin_url('users.php?amendo_tellix_ukoblet=1')); ?>">Brukere → Uten Tellix-kobling</a> med massehandlingen «Koble til Tellix».</p>
         <?php if (!$apne): ?>
             <p class="field-help">Ingen kunder venter på kobling.</p>
         <?php else: ?>

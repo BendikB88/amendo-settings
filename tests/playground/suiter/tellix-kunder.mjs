@@ -161,7 +161,10 @@ await bruker('ingengruppe@tk1422.no', venter('988888881', 'Uten Gruppe AS'));
 await k1422({ kall_slett: true });
 await godkjenn('ingengruppe@tk1422.no');
 m = await meta('ingengruppe@tk1422.no');
-sjekk('ingen treff og ingen gruppe valgt: feil, ikke opprettet, godkjent', m.meta._b2b_tellix_status === 'feil' && /Velg kundegruppe/.test(m.meta._b2b_tellix?.melding || '') && !(await webkall()).some(k => k.sti === 'customer/save') && m.meta._b2b_status === 'godkjent', m.meta);
+// 1.4.27: faktura krever ikke kundegruppe, så godkjenning uten gruppevalg oppretter kunden.
+const lagreUten = (await webkall()).find(k => k.sti === 'customer/save');
+sjekk('ingen treff og ingen gruppe valgt: opprettet uten customerGroupId, godkjent', m.meta._b2b_tellix_status === 'opprettet' && /^\d+$/.test(m.meta._tellixCustomerId) && lagreUten && !('customerGroupId' in (lagreUten.body?.data?.[0] || {})) && m.meta._b2b_status === 'godkjent', [m.meta, lagreUten?.body]);
+sjekk('… beskjeden: «uten kundegruppe»', / uten kundegruppe\./.test(m.meta._b2b_tellix?.melding || ''), m.meta._b2b_tellix?.melding);
 
 await k1422({ web: { nede: true } });
 await bruker('nede@tk1422.no', venter('988888882', 'Nede AS'));
@@ -272,8 +275,8 @@ sjekk('handlingen «Koble til Tellix», gruppevalget over tabellen og visningen 
 m = await meta('m1@tk1422.no');
 sjekk('m1 (org.nr): koblet til T10', m.meta._tellixCustomerId === 'T10' && m.meta._tellixGroupId === '14', m.meta);
 m = await meta('m2@tk1422.no');
-sjekk('m2 (uten treff, ingen gruppe valgt): feil, ikke opprettet', m.meta._b2b_tellix_status === 'feil' && !(await webkall()).some(k => k.sti === 'customer/save'), m.meta);
-sjekk('beskjeden: koblet, feilet, fra før, og 2 ikke behandlet (maks 25)', /1 koblet til en Tellix-kunde, 1 feilet, 1 var koblet fra før/.test(ms.beskjed) && /2 ble ikke behandlet \(maks 25 om gangen\)/.test(ms.beskjed) && /notice-warning/.test(ms.beskjed), ms.beskjed);
+sjekk('m2 (uten treff, ingen gruppe valgt): opprettet uten customerGroupId (1.4.27)', m.meta._b2b_tellix_status === 'opprettet' && (await webkall()).some(k => k.sti === 'customer/save' && !('customerGroupId' in (k.body?.data?.[0] || {}))), m.meta);
+sjekk('beskjeden: koblet, opprettet, fra før, og 2 ikke behandlet (maks 25)', /1 koblet til en Tellix-kunde, 1 opprettet i Tellix, 1 var koblet fra før/.test(ms.beskjed) && /2 ble ikke behandlet \(maks 25 om gangen\)/.test(ms.beskjed) && /notice-success/.test(ms.beskjed), ms.beskjed);
 ms = await masse({ ider, gruppe: '14', rolle: 'customer' });
 sjekk('kunde-rolle: ingen handling, stoppet', ms.stoppet === true && !ms.handlinger?.amendo_tellix_koble, ms);
 

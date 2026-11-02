@@ -562,10 +562,114 @@ function amendo_tellix_rest_kunde(WP_REST_Request $req) {
     $feil = amendo_kg_klar_eller_feil();
     if ($feil) return $feil;
     $id = (int) $req['user_id'];
-    if (!get_userdata($id)) return amendo_tellix_svar(0) + ['tellix_koblet' => false];
+    if (!get_userdata($id)) return amendo_tellix_svar(0) + ['tellix_koblet' => false, 'faktura' => false];
     $gruppe = amendo_tellix_oppdater_bruker($id);
     // 1.4.24: etter oppslaget, så en kunde som ble koblet av det, teller.
-    return amendo_tellix_svar($gruppe) + ['tellix_koblet' => amendo_tellix_koblet($id)];
+    return amendo_tellix_svar($gruppe) + [
+        'tellix_koblet' => amendo_tellix_koblet($id),
+        // 1.4.27 — se amendo_faktura_for_bruker().
+        'faktura'       => amendo_faktura_for_bruker($id, $gruppe)['faktura'],
+    ];
+}
+
+// ── Faktura (1.4.27) ────────────────────────────────────────────────────────
+//
+// Faktura krever ikke lenger kundegruppe. Tellix trenger bare kundens UUID og
+// navn for å fakturere, og gruppen kan uansett ikke settes via API-et. Faktura
+// er lov når brukeren IKKE har sperren «Ikke faktura» (_amendo_ingen_faktura
+// = '1'), og
+//   a) gruppen har faktura i kundegruppetabellen (som før, så Garçon virker
+//      uendret), eller
+//   b) brukeren er koblet til Tellix (tellix_koblet: gyldig UUID) og er
+//      godkjent bedrift (_b2b_status = 'godkjent') eller Tellix-kunden har
+//      org.nr (organizationNumber, ni siffer).
+// Kundegruppen styrer fortsatt rabatt og levering.
+
+/** Har brukeren sperren «Ikke faktura»? */
+function amendo_faktura_sperret($bruker_id) {
+    return (string) get_user_meta((int) $bruker_id, '_amendo_ingen_faktura', true) === '1';
+}
+
+/**
+ * Org.nr (ni siffer) på Tellix-kunden brukeren er koblet til, fra vår kopi av
+ * kundelista (amendo_tellix_orgnr_fra_rad leser organizationNumber), ellers ''.
+ * Ingen nye kall: rabatt/kunde har nettopp oppdatert kopien ved behov.
+ */
+function amendo_faktura_tellix_orgnr($bruker_id) {
+    $uuid = (string) get_user_meta((int) $bruker_id, '_tellixCustomerUuId', true);
+    $kid  = (string) get_user_meta((int) $bruker_id, '_tellixCustomerId', true);
+    $data = amendo_tellix_liste_les();
+    if (!$data || ($uuid === '' && $kid === '')) return '';
+    foreach ($data['kunder'] as $k) {
+        if (!is_array($k)) continue;
+        if (($uuid !== '' && $uuid !== '0' && ($k['uuid'] ?? '') === $uuid) || ($kid !== '' && $kid !== '0' && ($k['id'] ?? '') === $kid)) {
+            $orgnr = (string) ($k['orgnr'] ?? '');
+            return strlen($orgnr) === 9 ? $orgnr : '';
+        }
+    }
+    return '';
+}
+
+/**
+ * ['faktura' => bool, 'grunn' => 'sperret'|'gruppe'|'bedrift'|'ikke_koblet'|'ikke_bedrift'|'ukjent'].
+ * $gruppe: gruppen som gjelder (fra rabatt/kunde, eller _tellixGroupId i admin).
+ */
+function amendo_faktura_for_bruker($bruker_id, $gruppe) {
+    $bruker_id = (int) $bruker_id;
+    if (!get_userdata($bruker_id)) return ['faktura' => false, 'grunn' => 'ukjent'];
+    if (amendo_faktura_sperret($bruker_id)) return ['faktura' => false, 'grunn' => 'sperret'];
+    if ((int) $gruppe > 0 && amendo_kg_innstilling((int) $gruppe)['faktura']) return ['faktura' => true, 'grunn' => 'gruppe'];
+    if (!amendo_tellix_koblet($bruker_id)) return ['faktura' => false, 'grunn' => 'ikke_koblet'];
+    $godkjent = get_user_meta($bruker_id, '_b2b_status', true) === 'godkjent';
+    if ($godkjent || amendo_faktura_tellix_orgnr($bruker_id) !== '') return ['faktura' => true, 'grunn' => 'bedrift'];
+    return ['faktura' => false, 'grunn' => 'ikke_bedrift'];
+}
+
+/** Kort forklaring til admin. */
+function amendo_faktura_tekst(array $f) {
+    return [
+        'sperret'      => 'Nei – «Ikke faktura» er satt',
+        'gruppe'       => 'Ja – kundegruppen har faktura',
+        'bedrift'      => 'Ja – koblet til Tellix og bedrift',
+        'ikke_koblet'  => 'Nei – ikke koblet til Tellix',
+        'ikke_bedrift' => 'Nei – ikke godkjent bedrift og uten org.nr i Tellix',
+        'ukjent'       => 'Nei',
+    ][$f['grunn']] ?? ($f['faktura'] ? 'Ja' : 'Nei');
+}
+
+// Bryteren på brukerprofilen. Bare for dem som kan bruke Amendo-admin.
+add_action('show_user_profile', 'amendo_faktura_profilfelt');
+add_action('edit_user_profile', 'amendo_faktura_profilfelt');
+function amendo_faktura_profilfelt($u) {
+    if (!current_user_can(amendo_settings_kapabilitet())) return;
+    $f = amendo_faktura_for_bruker($u->ID, (int) get_user_meta($u->ID, '_tellixGroupId', true));
+    ?>
+    <h2>Faktura i nettbutikken</h2>
+    <table class="form-table" role="presentation" id="amendo-faktura-profil">
+        <tr>
+            <th scope="row">Ikke faktura</th>
+            <td>
+                <input type="hidden" name="amendo_ingen_faktura_finnes" value="1">
+                <label><input type="checkbox" name="amendo_ingen_faktura" value="1" <?php checked(amendo_faktura_sperret($u->ID)); ?>> Kunden får ikke betale med faktura</label>
+                <p class="description">Nå: <?php echo esc_html(amendo_faktura_tekst($f)); ?>. Uten sperren får en kunde som er koblet til Tellix og er godkjent bedrift (eller har org.nr i Tellix), faktura, også uten kundegruppe. Kundegruppen styrer bare rabatt og levering.</p>
+            </td>
+        </tr>
+    </table>
+    <?php
+}
+
+add_action('personal_options_update', 'amendo_faktura_profil_lagre');
+add_action('edit_user_profile_update', 'amendo_faktura_profil_lagre');
+function amendo_faktura_profil_lagre($bruker_id) {
+    // WordPress har sjekket nonce-en (update-user_<id>) før disse krokene.
+    if (empty($_POST['amendo_ingen_faktura_finnes'])) return;
+    if (!current_user_can('edit_user', $bruker_id) || !current_user_can(amendo_settings_kapabilitet())) return;
+    amendo_faktura_sett_sperre($bruker_id, !empty($_POST['amendo_ingen_faktura']));
+}
+
+function amendo_faktura_sett_sperre($bruker_id, $sperret) {
+    if ($sperret) update_user_meta((int) $bruker_id, '_amendo_ingen_faktura', '1');
+    else delete_user_meta((int) $bruker_id, '_amendo_ingen_faktura');
 }
 
 /**

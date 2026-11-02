@@ -78,7 +78,7 @@ sjekk('200', r.status === 200, r.tekst);
 sjekk('gruppe 14 fra Tellix (ikke den lagrede 0)', r.json?.gruppe_id === 14 && r.json?.gruppe_navn === 'Bedriftskunder', r.json);
 sjekk('nettbutikk: gruppens sats og kategorisatsen', r.json?.nettbutikk?.prosent === 10 && r.json?.nettbutikk?.kategorier?.[String(kat.ringer)] === 15, r.json?.nettbutikk);
 sjekk('helsebygget null for vanlig gruppe', r.json?.helsebygget === null);
-sjekk('nøyaktig de fem feltene (tellix_koblet fra 1.4.24)', JSON.stringify(Object.keys(r.json || {}).sort()) === '["gruppe_id","gruppe_navn","helsebygget","nettbutikk","tellix_koblet"]', Object.keys(r.json || {}));
+sjekk('nøyaktig de seks feltene (tellix_koblet fra 1.4.24, faktura fra 1.4.27)', JSON.stringify(Object.keys(r.json || {}).sort()) === '["faktura","gruppe_id","gruppe_navn","helsebygget","nettbutikk","tellix_koblet"]', Object.keys(r.json || {}));
 sjekk('tellix_koblet: true når samme oppslag skrev _tellixCustomerUuId', r.json?.tellix_koblet === true, r.json?.tellix_koblet);
 let m = await brukermeta('bedrift@example.com');
 sjekk('_tellixGroupId, _tellixCustomerId og _tellixCustomerUuId oppdatert', m.meta._tellixGroupId === '14' && m.meta._tellixCustomerId === 'T1' && m.meta._tellixCustomerUuId === 'U1', m.meta);

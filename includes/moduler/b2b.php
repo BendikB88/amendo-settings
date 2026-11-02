@@ -22,7 +22,9 @@
  *    søkt etter at noen andre hadde brukt nummeret deres.
  *
  * 2. AKTIVE B2B-KUNDER: alle med `billing_org_number`, søkbart på org.nr og
- *    firmanavn (`billing_company`).
+ *    firmanavn (`billing_company`). Kolonnen Faktura (1.4.27) viser om
+ *    kunden får faktura og hvorfor, med bryteren «Ikke faktura» — se
+ *    amendo_faktura_for_bruker() i b2b-tellix.php.
  *
  * 3. TELLIX-KOBLING (1.4.22): godkjenning kobler kunden til Tellix-kunden med
  *    samme org.nr/e-post, eller oppretter den. Feiler Tellix, står
@@ -163,6 +165,10 @@ add_action('amendo_admin_etter_skjema', function() {
         <?php wp_nonce_field('amendo_b2b_soknad'); ?>
         <input type="hidden" name="action" value="amendo_b2b_soknad">
     </form>
+    <form id="amendo-b2b-faktura" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+        <?php wp_nonce_field('amendo_b2b_faktura'); ?>
+        <input type="hidden" name="action" value="amendo_b2b_faktura">
+    </form>
     <form id="amendo-b2b-sok" method="get" action="<?php echo esc_url(admin_url('admin.php')); ?>#b2b">
         <input type="hidden" name="page" value="amendo-settings">
     </form>
@@ -176,7 +182,23 @@ const AMENDO_B2B_MELDINGER = [
     'ugyldig_orgnr' => ['feil', 'Søknaden har ikke et gyldig org.nummer (ni siffer) og kan ikke godkjennes. Rett nummeret på brukeren først.'],
     'ukjent_bruker' => ['feil', 'Fant ikke brukeren.'],
     'ukjent_valg'   => ['feil', 'Ukjent handling.'],
+    'faktura_sperret'  => ['ok', '«Ikke faktura» er satt. Kunden får ikke betale med faktura.'],
+    'faktura_tillatt'  => ['ok', '«Ikke faktura» er fjernet.'],
 ];
+
+// Bryteren «Ikke faktura» i Aktive B2B-kunder (1.4.27). Verdien er «<id>:1» (sett) eller «<id>:0» (fjern).
+add_action('admin_post_amendo_b2b_faktura', function() {
+    if (!current_user_can(amendo_settings_kapabilitet())) wp_die('Ingen tilgang', 403);
+    check_admin_referer('amendo_b2b_faktura');
+    $v = is_scalar($_POST['ingen_faktura'] ?? null) ? (string) $_POST['ingen_faktura'] : '';
+    $svar = 'ukjent_bruker';
+    if (preg_match('/^(\d+):([01])$/', $v, $m) && get_userdata((int) $m[1])) {
+        amendo_faktura_sett_sperre((int) $m[1], $m[2] === '1');
+        $svar = $m[2] === '1' ? 'faktura_sperret' : 'faktura_tillatt';
+    }
+    wp_redirect(admin_url('admin.php?page=amendo-settings&b2b=' . $svar . '#b2b'));
+    exit;
+});
 
 add_action('amendo_admin_paneler', function() {
     $melding  = AMENDO_B2B_MELDINGER[(string) ($_GET['b2b'] ?? '')] ?? null;
@@ -228,7 +250,7 @@ add_action('amendo_admin_paneler', function() {
                     <td><a href="<?php echo esc_url(get_edit_user_link($u->ID)); ?>"><?php echo esc_html(trim($u->first_name . ' ' . $u->last_name) ?: $u->display_name); ?></a><br><span class="field-help"><?php echo esc_html($u->user_email); ?></span></td>
                     <td><?php echo $andre ? esc_html($andre . ' bruker' . ($andre === 1 ? '' : 'e')) : 'Ingen'; ?></td>
                     <?php if ($tellix_i_bruk): ?>
-                    <td><select form="amendo-b2b-behandle" name="gruppe[<?php echo (int) $u->ID; ?>]" aria-label="Kundegruppe hvis kunden opprettes i Tellix"><?php amendo_b2b_tellix_gruppevalg(null); ?></select><br><span class="field-help">Brukes hvis kunden ikke finnes i Tellix.</span></td>
+                    <td><select form="amendo-b2b-behandle" name="gruppe[<?php echo (int) $u->ID; ?>]" aria-label="Kundegruppe hvis kunden opprettes i Tellix"><?php amendo_b2b_tellix_gruppevalg(null); ?></select><br><span class="field-help">Valgfritt. Brukes hvis kunden opprettes i Tellix, og må uansett settes i Tellix backoffice. Styrer rabatt og levering, ikke faktura.</span></td>
                     <?php endif; ?>
                     <td class="b2b-knapper">
                         <button type="submit" form="amendo-b2b-behandle" name="godkjenn" value="<?php echo (int) $u->ID; ?>" class="amendo-btn-secondary b2b-bekreft" data-bekreft="<?php echo esc_attr('Godkjenne ' . (get_user_meta($u->ID, 'billing_company', true) ?: $orgnr) . '? Kunden får se bestillingene til alle med org.nr ' . $orgnr . '.'); ?>">Godkjenn</button>
@@ -253,7 +275,7 @@ add_action('amendo_admin_paneler', function() {
                 <p class="field-help"><?php echo $sok !== '' ? 'Ingen treff.' : 'Ingen bedriftskunder ennå.'; ?></p>
             <?php else: ?>
             <table class="amendo-tabell">
-                <thead><tr><th>Firma</th><th>Org.nr</th><th>Kontaktperson</th><th>Kundegruppe</th><?php if ($tellix_i_bruk): ?><th>Tellix-kunde</th><?php endif; ?><th>Godkjent</th></tr></thead>
+                <thead><tr><th>Firma</th><th>Org.nr</th><th>Kontaktperson</th><th>Kundegruppe</th><?php if ($tellix_i_bruk): ?><th>Tellix-kunde</th><?php endif; ?><th>Faktura</th><th>Godkjent</th></tr></thead>
                 <tbody>
                 <?php foreach ($kunder['kunder'] as $u):
                     $behandlet = (string) get_user_meta($u->ID, '_b2b_behandlet', true);
@@ -264,6 +286,11 @@ add_action('amendo_admin_paneler', function() {
                     <td><a href="<?php echo esc_url(get_edit_user_link($u->ID)); ?>"><?php echo esc_html(trim($u->first_name . ' ' . $u->last_name) ?: $u->display_name); ?></a><br><span class="field-help"><?php echo esc_html($u->user_email); ?></span></td>
                     <td><?php $gid = (int) get_user_meta($u->ID, '_tellixGroupId', true); echo esc_html($gid ? ((amendo_tellix_grupper()[$gid]['navn'] ?? '') ?: (string) $gid) : '—'); ?></td>
                     <?php if ($tellix_i_bruk): ?><td class="b2b-tellix-kunde"><?php echo esc_html(amendo_b2b_tellix_er_koblet($u->ID) ? ((string) get_user_meta($u->ID, '_tellixCustomerId', true) ?: 'Koblet') : 'Ikke koblet'); ?></td><?php endif; ?>
+                    <?php $sperret = amendo_faktura_sperret($u->ID); $f = amendo_faktura_for_bruker($u->ID, (int) get_user_meta($u->ID, '_tellixGroupId', true)); ?>
+                    <td class="b2b-faktura b2b-faktura-<?php echo $f['faktura'] ? 'ja' : 'nei'; ?>">
+                        <?php echo esc_html(amendo_faktura_tekst($f)); ?><br>
+                        <button type="submit" form="amendo-b2b-faktura" name="ingen_faktura" value="<?php echo (int) $u->ID . ($sperret ? ':0' : ':1'); ?>" class="amendo-btn-secondary b2b-ingen-faktura" aria-pressed="<?php echo $sperret ? 'true' : 'false'; ?>"><?php echo $sperret ? '✓ Ikke faktura – fjern' : 'Ikke faktura'; ?></button>
+                    </td>
                     <td><?php echo esc_html($behandlet ? wp_date('d.m.Y', strtotime($behandlet)) : '—'); ?></td>
                 </tr>
                 <?php endforeach; ?>
