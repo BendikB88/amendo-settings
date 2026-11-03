@@ -571,6 +571,9 @@ function amendo_tellix_rest_kunde(WP_REST_Request $req) {
     $id = (int) $req['user_id'];
     if (!get_userdata($id)) return amendo_tellix_svar(0) + ['tellix_koblet' => false, 'faktura' => false];
     $gruppe = amendo_tellix_oppdater_bruker($id);
+    // 1.4.29: automatisk godkjenning fra Tellix (b2b-tellix-bedrifter.php, bare
+    // når B2B er på og bryteren står på). Før faktura, som avhenger av den.
+    do_action('amendo_tellix_kunde_oppslag', $id);
     // 1.4.24: etter oppslaget, så en kunde som ble koblet av det, teller.
     return amendo_tellix_svar($gruppe) + [
         'tellix_koblet' => amendo_tellix_koblet($id),

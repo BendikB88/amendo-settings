@@ -36,6 +36,11 @@
  * 4. FLYTT FRA B2B WHOLESALE SUITE (1.4.28): engangsverktøy med tørrkjøring som
  *    gir b2bwhs-kundene godkjenning og Tellix-kobling her. Se b2b-flytting.php.
  *
+ * 5. BEDRIFTSKUNDER FRA TELLIX (1.4.29): Tellix bestemmer hvem som er bedrift.
+ *    Automatisk godkjenning på e-post, jobben som lager kontoer for nye
+ *    Tellix-bedrifter, «Send invitasjon» og velkomst-e-posten. Se
+ *    b2b-tellix-bedrifter.php.
+ *
  * Org.nr. på ordren (1.4.28): `_billing_org_number` under firmanavnet i
  * fakturaadressen (wp-admin, e-post, PDF) — se b2b-orgnr-ordre.php.
  *
@@ -116,6 +121,8 @@ function amendo_b2b_behandle($bruker_id, $valg) {
 // Frontenden sender den hit i stedet:
 //
 //     { bruker_id, org_nr }  →  200 { ok: true, status: 'venter', org_nr }
+//                               200 { ok: true, status: 'godkjent', org_nr }
+//                                   (1.4.29: e-posten er en bedrift i Tellix)
 //                               400 ugyldig org.nr / ukjent bruker
 //                               409 godkjent, har billing_org_number, avvist
 //                                   eller er en butikkbruker
@@ -154,6 +161,12 @@ function amendo_b2b_soknad_rest(WP_REST_Request $req) {
     }
     if ($status === 'avvist') {
         return amendo_b2b_soknad_feil(409, 'amendo_b2b_soknad_avvist', 'Søknaden er avvist. Kunden må kontakte butikken.');
+    }
+
+    // 1.4.29: er e-posten en bedrift i Tellix (med samme org.nr), godkjennes
+    // kunden med en gang — ingen søknad. Se b2b-tellix-bedrifter.php.
+    if (amendo_b2b_auto($id, $orgnr) === 'godkjent') {
+        return ['ok' => true, 'status' => 'godkjent', 'org_nr' => amendo_b2b_orgnr(get_user_meta($id, 'billing_org_number', true))];
     }
 
     update_user_meta($id, '_orgnr_soknad', $orgnr);
@@ -316,7 +329,8 @@ add_action('amendo_admin_paneler', function() {
                 <tr class="b2b-soknad" data-bruker="<?php echo (int) $u->ID; ?>">
                     <td><?php echo esc_html($tid ? wp_date('d.m.Y H:i', $tid) : '—'); ?></td>
                     <td><?php echo esc_html(get_user_meta($u->ID, 'billing_company', true) ?: '—'); ?></td>
-                    <td><?php if ($orgnr): ?><a href="<?php echo esc_url('https://virksomhet.brreg.no/oppslag/enheter/' . $orgnr); ?>" target="_blank" rel="noopener"><?php echo esc_html($orgnr); ?></a><?php else: ?>—<?php endif; ?></td>
+                    <td><?php if ($orgnr): ?><a href="<?php echo esc_url('https://virksomhet.brreg.no/oppslag/enheter/' . $orgnr); ?>" target="_blank" rel="noopener"><?php echo esc_html($orgnr); ?></a><?php else: ?>—<?php endif; ?>
+                        <?php if ($hint = amendo_b2b_tellix_hint($orgnr)): // 1.4.29 ?><br><span class="field-help b2b-tellix-hint">Finnes i Tellix: <?php echo esc_html(($hint['navn'] ?: 'kunde ' . $hint['id']) . ', ' . ($hint['epost'] ?: 'uten e-post')); ?>. Sjekk at søkeren hører til bedriften før du godkjenner.</span><?php endif; ?></td>
                     <td><a href="<?php echo esc_url(get_edit_user_link($u->ID)); ?>"><?php echo esc_html(trim($u->first_name . ' ' . $u->last_name) ?: $u->display_name); ?></a><br><span class="field-help"><?php echo esc_html($u->user_email); ?></span></td>
                     <td><?php echo $andre ? esc_html($andre . ' bruker' . ($andre === 1 ? '' : 'e')) : 'Ingen'; ?></td>
                     <?php if ($tellix_i_bruk): ?>
@@ -379,6 +393,8 @@ add_action('amendo_admin_paneler', function() {
 
         <?php if ($tellix_i_bruk) amendo_b2b_tellix_kort(); ?>
 
+        <?php amendo_b2b_tellix_bedrifter_kort(); ?>
+
         <?php amendo_b2b_flytt_kort(); ?>
 
         </div>
@@ -401,5 +417,6 @@ add_action('amendo_admin_paneler', function() {
 require_once __DIR__ . '/b2b-tellix.php';
 require_once __DIR__ . '/b2b-tellix-kunder.php';
 require_once __DIR__ . '/b2b-flytting.php';
+require_once __DIR__ . '/b2b-tellix-bedrifter.php';
 require_once __DIR__ . '/b2b-kundegrupper.php';
 require_once __DIR__ . '/b2b-orgnr-ordre.php';
