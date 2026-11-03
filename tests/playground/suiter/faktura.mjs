@@ -138,5 +138,26 @@ html = await side();
 sjekk('søknader: gruppevalget er valgfritt og styrer ikke faktura', html.includes('Valgfritt. Brukes hvis kunden opprettes i Tellix') && html.includes('Styrer rabatt og levering, ikke faktura.'));
 sjekk('Tellix-kobling: forklarer at faktura virker uten kundegruppe', html.includes('Faktura virker når kunden er koblet og er godkjent bedrift (eller har org.nr i Tellix), uten kundegruppe'));
 
+// ── Org.nr. på ordren (1.4.28, b2b-orgnr-ordre.php) ────────────────────────
+console.log('\nOrg.nr. i fakturaadressen');
+const ordre = orgnr => get('/amendo-test/v1/v1428-ordreadresse', { orgnr });
+const linjer = a => String(a || '').split(/<br\s*\/?>/i).map(s => s.trim());
+const ORG = 'Org.nr. 911 222 333';
+let o = await ordre('911 222 333');
+let fl = linjer(o.faktura);
+sjekk('fakturaadressen: «Org.nr. 911 222 333» på linja rett under firmanavnet', fl.indexOf(ORG) > 0 && fl[fl.indexOf(ORG) - 1] === 'Firma &amp; Sønn AS', fl);
+sjekk('firmanavnet escapes én gang (WooCommerce gjør det), ingen dobbel escaping', !o.faktura.includes('&amp;amp;'), o.faktura);
+sjekk('leveringsadressen: uten org.nr. og uten tom linje', !o.levering.includes('Org.nr.') && !linjer(o.levering).includes(''), linjer(o.levering));
+sjekk('ordre-e-posten (HTML) har org.nr. i fakturaadressen', o.epost.includes(ORG), o.epost.slice(0, 400));
+sjekk('ordre-e-posten (ren tekst): egen linje under firmanavnet', o.epost_tekst.includes('Firma &amp; Sønn AS\n' + ORG) || o.epost_tekst.includes('Firma & Sønn AS\n' + ORG), o.epost_tekst.slice(0, 300));
+sjekk('wp-admin: feltet Org.nr. (org_number → _billing_org_number) rett etter firma', JSON.stringify(o.admin_felt) === '["first_name","last_name","company","org_number","address_1"]', o.admin_felt);
+sjekk('adresser som ikke er ordrer (f.eks. kundeprofilen): ingen tom linje', !linjer(o.kunde_adr).includes(''), linjer(o.kunde_adr));
+o = await ordre(null);
+sjekk('ordre uten org.nr.: adressen som før, ingen tom linje', !o.faktura.includes('Org.nr.') && !linjer(o.faktura).includes('') && linjer(o.faktura)[0] === 'Firma &amp; Sønn AS', linjer(o.faktura));
+o = await ordre('12345');
+sjekk('org.nr. som ikke er ni siffer vises ikke', !o.faktura.includes('Org.nr.'), linjer(o.faktura));
+
 await klargjor({ moduler: null, tellix: null, kundegrupper_ny: null, faktura: null, nullstill: true });
+o = await ordre('911222333');
+sjekk('B2B av: ingen org.nr. og ikke noe felt i wp-admin', !o.faktura.includes('Org.nr.') && !o.admin_felt.includes('org_number'), [linjer(o.faktura), o.admin_felt]);
 ferdig();

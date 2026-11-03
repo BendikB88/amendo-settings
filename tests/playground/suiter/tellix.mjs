@@ -71,6 +71,28 @@ r = await kunde('bedrift@example.com', '');
 sjekk('tom secret i WordPress: avvist også med tom header', r.status === 401 || r.status === 403, r.status);
 await opt({ amendo_kasse_secret: SECRET });
 
+// ── Ingen mellomlagring (1.4.28, includes/nocache.php) ──────────────────────
+// X-Amendo-Test-LS-Nocache settes av mu/v1428-test.php når
+// litespeed_control_set_nocache kjøres.
+console.log('\nIngen mellomlagring');
+const nocache = h => /no-store/.test(h.get('cache-control') || '') && /no-cache/.test(h.get('cache-control') || '') && /private/.test(h.get('cache-control') || '')
+  && !!h.get('expires') && h.get('x-litespeed-cache-control') === 'no-cache' && h.get('x-amendo-test-ls-nocache') === '1';
+const vis = h => ({ cc: h.get('cache-control'), exp: h.get('expires'), ls: h.get('x-litespeed-cache-control'), akt: h.get('x-amendo-test-ls-nocache') });
+// Ukjent bruker: 200 uten Tellix-oppslag, så sakene under ser ingen henting fra før.
+r = await rute('rabatt/kunde/99999999');
+sjekk('rabatt/kunde (200): nocache_headers, X-LiteSpeed-Cache-Control: no-cache og litespeed_control_set_nocache', r.status === 200 && nocache(r.h), [r.status, vis(r.h)]);
+r = await kunde('bedrift@example.com', null);
+sjekk('rabatt/kunde uten secret (avvist): også', (r.status === 401 || r.status === 403) && nocache(r.h), [r.status, vis(r.h)]);
+// Eget nummer, så grensen per nummer lenger ned ikke merker kallet.
+r = await telefon('40001428');
+sjekk('rabatt/telefon: også', r.status < 500 && nocache(r.h), [r.status, vis(r.h)]);
+r = await rute('settings', null);
+sjekk('/settings (åpen rute): også', r.status === 200 && nocache(r.h), [r.status, vis(r.h)]);
+r = await rute('finnes-ikke', null);
+sjekk('ukjent rute under amendo-settings/v1 (404): også', r.status === 404 && nocache(r.h), [r.status, vis(r.h)]);
+const andre = await fetch(B + '/wp/v2/types');
+sjekk('andre navnerom (wp/v2) røres ikke', andre.status === 200 && !andre.headers.get('x-litespeed-cache-control') && !andre.headers.get('x-amendo-test-ls-nocache'), vis(andre.headers));
+
 // ── rabatt/kunde ────────────────────────────────────────────────────────────
 console.log('\nrabatt/kunde');
 r = await kunde('bedrift@example.com');

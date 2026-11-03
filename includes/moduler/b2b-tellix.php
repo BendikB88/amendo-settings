@@ -56,6 +56,13 @@ const AMENDO_TELLIX_NAVN_LAGRES     = 12 * HOUR_IN_SECONDS;
 const AMENDO_TELLIX_TLF_GRENSE      = 10;
 const AMENDO_TELLIX_TLF_VINDU       = 15 * MINUTE_IN_SECONDS;
 
+// 1.4.28: `_tellixGroupId` kan skrives og leses via wc/v3/customers (garcon-b2b
+// sin settTellixGruppe() og invitasjonen). Se includes/kundefelter.php.
+add_filter('amendo_rest_kundefelter', function($felt) {
+    $felt[] = '_tellixGroupId';
+    return $felt;
+});
+
 // ── Adapter mot amendo-core ─────────────────────────────────────────────────
 
 /** Rabattene (Customers) og kundelista (TellixAPI) må begge finnes i amendo-core. */

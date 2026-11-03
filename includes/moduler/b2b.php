@@ -16,6 +16,9 @@
  *    søkeren jobber der. Godkjenning er en manuell kontroll, og knappen ber om
  *    bekreftelse av samme grunn.
  *
+ *    Fra 1.4.28 sendes de tre nøklene til POST /b2b-soknad (under): wc/v3
+ *    lagrer ikke `_`-nøkler.
+ *
  *    ⚠ Avvis sletter `_orgnr_soknad` (nummeret ligger igjen i
  *    `_b2b_avvist_orgnr`). Ellers ville `bedrift-sok` svart «søknad til
  *    behandling» for nummeret for alltid, og den ekte bedriften kunne aldri
@@ -29,6 +32,12 @@
  * 3. TELLIX-KOBLING (1.4.22): godkjenning kobler kunden til Tellix-kunden med
  *    samme org.nr/e-post, eller oppretter den. Feiler Tellix, står
  *    godkjenningen. Se b2b-tellix-kunder.php.
+ *
+ * 4. FLYTT FRA B2B WHOLESALE SUITE (1.4.28): engangsverktøy med tørrkjøring som
+ *    gir b2bwhs-kundene godkjenning og Tellix-kobling her. Se b2b-flytting.php.
+ *
+ * Org.nr. på ordren (1.4.28): `_billing_org_number` under firmanavnet i
+ * fakturaadressen (wp-admin, e-post, PDF) — se b2b-orgnr-ordre.php.
  *
  * Kundegrupper (1.4.17): én rad per Tellix-gruppe med rabatt, hvor den
  * gjelder, faktura, bedriftsvisning og levering — se b2b-kundegrupper.php.
@@ -98,6 +107,67 @@ function amendo_b2b_behandle($bruker_id, $valg) {
     update_user_meta($bruker_id, '_b2b_behandlet', $naa);
     update_user_meta($bruker_id, '_b2b_behandlet_av', get_current_user_id());
     return $status;
+}
+
+// ── POST /b2b-soknad (1.4.28) ───────────────────────────────────────────────
+//
+// `/bedrift/registrer` lager kunden via wc/v3, men WooCommerce lagrer ikke
+// `_`-nøkler der (se includes/kundefelter.php), så søknaden kom aldri fram.
+// Frontenden sender den hit i stedet:
+//
+//     { bruker_id, org_nr }  →  200 { ok: true, status: 'venter', org_nr }
+//                               400 ugyldig org.nr / ukjent bruker
+//                               409 godkjent, har billing_org_number, avvist
+//                                   eller er en butikkbruker
+//
+// Samme fail-closed X-Amendo-Secret som /bedrift-sok. Ruten kan BARE sette
+// 'venter', aldri gi tilgang: godkjenning skjer i Søknader. Svaret leses fra
+// databasen etter skrivingen og er frontendens fasit.
+
+add_action('rest_api_init', function() {
+    register_rest_route('amendo-settings/v1', '/b2b-soknad', [
+        'methods'             => 'POST',
+        'callback'            => 'amendo_b2b_soknad_rest',
+        'permission_callback' => 'amendo_bedrift_sok_tilgang',
+    ]);
+});
+
+function amendo_b2b_soknad_feil($status, $kode, $melding) {
+    return new WP_REST_Response(['ok' => false, 'code' => $kode, 'message' => $melding], $status);
+}
+
+function amendo_b2b_soknad_rest(WP_REST_Request $req) {
+    $id    = is_numeric($req->get_param('bruker_id')) ? (int) $req->get_param('bruker_id') : 0;
+    $orgnr = is_scalar($req->get_param('org_nr')) ? amendo_b2b_orgnr($req->get_param('org_nr')) : '';
+
+    if (strlen($orgnr) !== 9) return amendo_b2b_soknad_feil(400, 'amendo_b2b_soknad_ugyldig_orgnr', 'org_nr må være ni siffer.');
+    // ⚠ 400, ikke 404: frontenden leser 404 som «ruten finnes ikke».
+    if ($id <= 0 || !get_userdata($id)) return amendo_b2b_soknad_feil(400, 'amendo_b2b_soknad_ukjent_bruker', 'Ukjent bruker.');
+
+    // En butikkbruker skal aldri bli en søknad (og senere bedriftskunde) via et API-kall.
+    if (user_can($id, 'edit_users') || user_can($id, amendo_settings_kapabilitet())) {
+        return amendo_b2b_soknad_feil(409, 'amendo_b2b_soknad_ikke_kunde', 'Brukeren er ikke en kunde.');
+    }
+    $status = (string) get_user_meta($id, '_b2b_status', true);
+    if ($status === 'godkjent' || (string) get_user_meta($id, 'billing_org_number', true) !== '') {
+        return amendo_b2b_soknad_feil(409, 'amendo_b2b_soknad_godkjent', 'Brukeren er allerede godkjent bedriftskunde.');
+    }
+    if ($status === 'avvist') {
+        return amendo_b2b_soknad_feil(409, 'amendo_b2b_soknad_avvist', 'Søknaden er avvist. Kunden må kontakte butikken.');
+    }
+
+    update_user_meta($id, '_orgnr_soknad', $orgnr);
+    update_user_meta($id, '_b2b_status', 'venter');
+    // Første innsending gjelder; et nytt kall flytter ikke søknaden bakerst i lista.
+    if ((string) get_user_meta($id, '_b2b_sokt', true) === '') update_user_meta($id, '_b2b_sokt', gmdate('c'));
+
+    wp_cache_delete($id, 'user_meta');
+    $lagret_status = (string) get_user_meta($id, '_b2b_status', true);
+    $lagret_orgnr  = amendo_b2b_orgnr(get_user_meta($id, '_orgnr_soknad', true));
+    if ($lagret_status !== 'venter' || $lagret_orgnr !== $orgnr) {
+        return amendo_b2b_soknad_feil(500, 'amendo_b2b_soknad_ikke_lagret', 'Søknaden ble ikke lagret.');
+    }
+    return ['ok' => true, 'status' => 'venter', 'org_nr' => $lagret_orgnr];
 }
 
 add_action('admin_post_amendo_b2b_soknad', function() {
@@ -309,6 +379,8 @@ add_action('amendo_admin_paneler', function() {
 
         <?php if ($tellix_i_bruk) amendo_b2b_tellix_kort(); ?>
 
+        <?php amendo_b2b_flytt_kort(); ?>
+
         </div>
 
         <div class="amendo-underpanel" data-under-panel="kundegrupper">
@@ -328,4 +400,6 @@ add_action('amendo_admin_paneler', function() {
 
 require_once __DIR__ . '/b2b-tellix.php';
 require_once __DIR__ . '/b2b-tellix-kunder.php';
+require_once __DIR__ . '/b2b-flytting.php';
 require_once __DIR__ . '/b2b-kundegrupper.php';
+require_once __DIR__ . '/b2b-orgnr-ordre.php';

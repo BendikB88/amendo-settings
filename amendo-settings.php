@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.27
+ * Version: 1.4.28
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.27');
+define('AMENDO_SETTINGS_VERSION', '1.4.28');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -29,6 +29,8 @@ require_once AMENDO_SETTINGS_PATH . 'includes/leveringsregler.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/helsebygget.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/mal.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/instagram.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/kundefelter.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/nocache.php';
 // Sist: laster modulene som er på, og de kan bruke alt over.
 require_once AMENDO_SETTINGS_PATH . 'includes/moduler.php';
 
