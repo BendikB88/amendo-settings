@@ -20,7 +20,7 @@ const lagre = post => get('/amendo-test/v1/v1423-lagre', { post });
 const side = async () => (await fetch(B + '/amendo-test/v1/v1423-side')).text();
 const hbHandling = body => get('/amendo-test/v1/v1417-handling', body);
 
-const KJENTE = ['b2b', 'helsebygget', 'henting', 'levering', 'faktura', 'wolt', 'gavekort', 'sporing'];
+const KJENTE = ['b2b', 'helsebygget', 'henting', 'levering', 'faktura', 'wolt', 'gavekort', 'sporing', 'bedriftspakker'];
 const dag = { åpen: '1', fra: '09:00', til: '17:00' };
 const tider = Object.fromEntries(['mandag', 'tirsdag', 'onsdag', 'torsdag', 'fredag', 'lørdag', 'søndag'].map(d => [d, dag]));
 const avd = (navn, ekstra = {}) => ({ navn, adresse: '', telefon: '', bilde: '', åpningstider: tider, henting_aktiv: '1', prosesseringstid: null, cutoff: '', tidsluke: null, maks_per_tidsluke: null, ...ekstra });

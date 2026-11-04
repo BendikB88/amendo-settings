@@ -107,6 +107,12 @@ function amendo_moduler_alle() {
             'beskrivelse' => 'Google Tag Manager, Klaviyo og Facebook-piksel på nettsiden, med samtykke. ID-ene står under Butikk. Bare en bryter for nettsiden.',
             'fil'         => null,
         ],
+        'bedriftspakker' => [
+            'navn'        => 'Bedriftspakker',
+            'ikon'        => '📦',
+            'beskrivelse' => 'Pakker til landingssiden for bedrifter (kakeabonnement, faste leveranser og møtemat) med pris fra dagens priser. Med B2B på kan søknaden ha valgt pakke og selgerkode.',
+            'fil'         => 'includes/moduler/bedriftspakker.php',
+        ],
     ];
 }
 

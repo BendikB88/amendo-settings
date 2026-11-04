@@ -471,3 +471,13 @@
 
 /* Felles mal og Wolt (1.4.23) */
 .wolt-rad input[type="text"], .wolt-rad select { width: 100%; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
+
+/* Bedriftspakker (1.4.31) */
+.bp-pakke [hidden] { display: none !important; }
+.bp-linje { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.bp-linje-produkt { flex: 1 1 260px; min-width: 0; }
+.bp-linje-produkt select, .bp-bare-bursdag select { width: 100%; }
+.bp-linje input[type="number"] { width: 80px; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; }
+.bp-valg { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 12px; }
+.bp-valg label { font-weight: normal; text-transform: none; letter-spacing: 0; display: inline-flex; align-items: center; gap: 4px; }
+#bp-advarsler ul { margin: 6px 0 0 18px; list-style: disc; }

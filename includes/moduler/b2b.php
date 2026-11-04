@@ -130,6 +130,12 @@ function amendo_b2b_behandle($bruker_id, $valg) {
 // Samme fail-closed X-Amendo-Secret som /bedrift-sok. Ruten kan BARE sette
 // 'venter', aldri gi tilgang: godkjenning skjer i Søknader. Svaret leses fra
 // databasen etter skrivingen og er frontendens fasit.
+//
+// 1.4.31: med modulen bedriftspakker på tar ruten også `pakker` og `ref`
+// (selgerkoden), via filteret amendo_b2b_soknad_tillegg og kroken
+// amendo_b2b_soknad_lagret — se includes/moduler/bedriftspakker.php. Svaret
+// får da også `pakker` og `ref` (filteret amendo_b2b_soknad_svar); uten
+// modulen er det som før.
 
 add_action('rest_api_init', function() {
     register_rest_route('amendo-settings/v1', '/b2b-soknad', [
@@ -151,6 +157,12 @@ function amendo_b2b_soknad_rest(WP_REST_Request $req) {
     // ⚠ 400, ikke 404: frontenden leser 404 som «ruten finnes ikke».
     if ($id <= 0 || !get_userdata($id)) return amendo_b2b_soknad_feil(400, 'amendo_b2b_soknad_ukjent_bruker', 'Ukjent bruker.');
 
+    // 1.4.31: felter fra andre moduler (bedriftspakker: `pakker` og `ref`),
+    // sjekket før noe lagres. Er modulen av, finnes ikke filteret, og feltene
+    // ignoreres som før.
+    $tillegg = apply_filters('amendo_b2b_soknad_tillegg', [], $req);
+    if (is_wp_error($tillegg)) return amendo_b2b_soknad_feil(400, $tillegg->get_error_code(), $tillegg->get_error_message());
+
     // En butikkbruker skal aldri bli en søknad (og senere bedriftskunde) via et API-kall.
     if (user_can($id, 'edit_users') || user_can($id, amendo_settings_kapabilitet())) {
         return amendo_b2b_soknad_feil(409, 'amendo_b2b_soknad_ikke_kunde', 'Brukeren er ikke en kunde.');
@@ -166,7 +178,8 @@ function amendo_b2b_soknad_rest(WP_REST_Request $req) {
     // 1.4.29: er e-posten en bedrift i Tellix (med samme org.nr), godkjennes
     // kunden med en gang — ingen søknad. Se b2b-tellix-bedrifter.php.
     if (amendo_b2b_auto($id, $orgnr) === 'godkjent') {
-        return ['ok' => true, 'status' => 'godkjent', 'org_nr' => amendo_b2b_orgnr(get_user_meta($id, 'billing_org_number', true))];
+        do_action('amendo_b2b_soknad_lagret', $id, $tillegg);
+        return apply_filters('amendo_b2b_soknad_svar', ['ok' => true, 'status' => 'godkjent', 'org_nr' => amendo_b2b_orgnr(get_user_meta($id, 'billing_org_number', true))], $id);
     }
 
     update_user_meta($id, '_orgnr_soknad', $orgnr);
@@ -180,7 +193,8 @@ function amendo_b2b_soknad_rest(WP_REST_Request $req) {
     if ($lagret_status !== 'venter' || $lagret_orgnr !== $orgnr) {
         return amendo_b2b_soknad_feil(500, 'amendo_b2b_soknad_ikke_lagret', 'Søknaden ble ikke lagret.');
     }
-    return ['ok' => true, 'status' => 'venter', 'org_nr' => $lagret_orgnr];
+    do_action('amendo_b2b_soknad_lagret', $id, $tillegg);
+    return apply_filters('amendo_b2b_soknad_svar', ['ok' => true, 'status' => 'venter', 'org_nr' => $lagret_orgnr], $id);
 }
 
 add_action('admin_post_amendo_b2b_soknad', function() {
@@ -318,7 +332,8 @@ add_action('amendo_admin_paneler', function() {
                 <p class="field-help">Ingen søknader venter.</p>
             <?php else: ?>
             <table class="amendo-tabell">
-                <thead><tr><th>Sendt</th><th>Firma</th><th>Org.nr</th><th>Kontaktperson</th><th>Allerede godkjent på nummeret</th><?php if ($tellix_i_bruk): ?><th>Kundegruppe i Tellix</th><?php endif; ?><th></th></tr></thead>
+                <?php $pakke_kolonne = has_action('amendo_b2b_soknad_celle'); // modulen bedriftspakker (1.4.31) ?>
+                <thead><tr><th>Sendt</th><th>Firma</th><th>Org.nr</th><th>Kontaktperson</th><?php if ($pakke_kolonne): ?><th>Pakke</th><?php endif; ?><th>Allerede godkjent på nummeret</th><?php if ($tellix_i_bruk): ?><th>Kundegruppe i Tellix</th><?php endif; ?><th></th></tr></thead>
                 <tbody>
                 <?php foreach ($soknader as $u):
                     $orgnr = amendo_b2b_orgnr(get_user_meta($u->ID, '_orgnr_soknad', true));
@@ -332,6 +347,7 @@ add_action('amendo_admin_paneler', function() {
                     <td><?php if ($orgnr): ?><a href="<?php echo esc_url('https://virksomhet.brreg.no/oppslag/enheter/' . $orgnr); ?>" target="_blank" rel="noopener"><?php echo esc_html($orgnr); ?></a><?php else: ?>—<?php endif; ?>
                         <?php if ($hint = amendo_b2b_tellix_hint($orgnr)): // 1.4.29 ?><br><span class="field-help b2b-tellix-hint">Finnes i Tellix: <?php echo esc_html(($hint['navn'] ?: 'kunde ' . $hint['id']) . ', ' . ($hint['epost'] ?: 'uten e-post')); ?>. Sjekk at søkeren hører til bedriften før du godkjenner.</span><?php endif; ?></td>
                     <td><a href="<?php echo esc_url(get_edit_user_link($u->ID)); ?>"><?php echo esc_html(trim($u->first_name . ' ' . $u->last_name) ?: $u->display_name); ?></a><br><span class="field-help"><?php echo esc_html($u->user_email); ?></span></td>
+                    <?php if ($pakke_kolonne): ?><td class="b2b-pakke"><?php do_action('amendo_b2b_soknad_celle', $u); ?></td><?php endif; ?>
                     <td><?php echo $andre ? esc_html($andre . ' bruker' . ($andre === 1 ? '' : 'e')) : 'Ingen'; ?></td>
                     <?php if ($tellix_i_bruk): ?>
                     <td><select form="amendo-b2b-behandle" name="gruppe[<?php echo (int) $u->ID; ?>]" aria-label="Kundegruppe hvis kunden opprettes i Tellix"><?php amendo_b2b_tellix_gruppevalg(null); ?></select><br><span class="field-help">Valgfritt. Brukes hvis kunden opprettes i Tellix, og må uansett settes i Tellix backoffice. Styrer rabatt og levering, ikke faktura.</span></td>

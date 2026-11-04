@@ -447,4 +447,56 @@ $(document).on('click', '.slett-antall-regel', function() {
         $('.kundegruppe-tom').prop('hidden', false);
         $(this).remove();
     });
+
+    // ── Bedriftspakker (bare når modulen er på — se includes/moduler/bedriftspakker.php) ──
+    // Nye pakker og linjer lages fra <template>-ene PHP har rendret. Numrene i
+    // `name` trenger ikke være sammenhengende (PHP leser listene i rekkefølgen
+    // i skjemaet), bare unike: de telles fra antall felt i fanen, som alltid er
+    // større enn numrene PHP har brukt.
+    var bpNr = $('#tab-bedriftspakker [name]').length + 1;
+
+    function bpType($pakke) {
+        var type = $pakke.find('.bp-type').val();
+        $pakke.find('.bp-bare-fast').prop('hidden', type !== 'fast');
+        $pakke.find('.bp-bare-bursdag').prop('hidden', type !== 'bursdag');
+    }
+
+    // WooCommerce sitt produktsøk (wc-enhanced-select) på de nye feltene.
+    function bpProduktsok() {
+        $(document.body).trigger('wc-enhanced-select-init');
+    }
+
+    $('#bp-legg-til').on('click', function() {
+        var mal = $('#bp-pakke-mal').html();
+        if (!mal) return;
+        var $pakke = $(mal.split('__p__').join(String(bpNr++)));
+        $('#bp-liste').append($pakke);
+        bpType($pakke);
+        bpProduktsok();
+    });
+
+    $(document).on('click', '.bp-slett-pakke', function() {
+        if (confirm('Slette pakken? Den forsvinner fra nettsiden når du lagrer.')) $(this).closest('.bp-pakke').remove();
+    });
+
+    // Linjer i oppskriften og kaker: samme mønster, hver med sin mal og liste.
+    $.each({ linje: '.bp-linjer', kake: '.bp-kaker' }, function(hva, liste) {
+        $(document).on('click', '.bp-legg-til-' + hva, function() {
+            var mal = $('#bp-' + hva + '-mal').html(), $pakke = $(this).closest('.bp-pakke');
+            if (!mal) return;
+            $pakke.find(liste).append(mal.split('__p__').join(String($pakke.data('p'))).split('__l__').join(String(bpNr++)));
+            bpProduktsok();
+        });
+        $(document).on('click', '.bp-slett-' + hva, function() {
+            $(this).closest('.bp-linje').remove();
+        });
+    });
+
+    $(document).on('change', '.bp-type', function() {
+        bpType($(this).closest('.bp-pakke'));
+    });
+
+    $(document).on('input', '.bp-pakke input[name$="[navn]"]', function() {
+        $(this).closest('.bp-pakke').find('.bp-tittel').text($(this).val() || 'Ny pakke');
+    });
 });
