@@ -43,9 +43,16 @@
  * til 'wolt'. I dag gjør mu-pluginen det; vi gjør det SIST (prioritet 99) og
  * bare når den fortsatt står på 'wolt_venter', så de to aldri gjør det dobbelt.
  * Bestillingen gjør tillegget som før.
+ *
+ * ── Etter bestilling (1.4.30) ─────────────────────────────────────────────
+ * Statusmeldinger fra Wolt (webhook), varsel til butikken når Wolt avviser
+ * eller ikke leverer, kolonnen Wolt i ordrelisten og «Kanseller hos Wolt»:
+ * se wolt-status.php. Varseladressene står per avdeling i fanen Wolt.
  */
 
 if (!defined('ABSPATH')) exit;
+
+require_once __DIR__ . '/wolt-status.php';
 
 const AMENDO_WOLT_MIN_TIMER = 4;   // når levering.min_timer ikke er satt (som AB_WOLT_MIN_LEAD_HOURS)
 const AMENDO_WOLT_LUKE      = 15;  // minutter, når levering.luke_minutter ikke er satt
@@ -71,19 +78,25 @@ function amendo_wolt_utsalg_alle() {
     return $ut;
 }
 
-/** Reglene per avdeling: [avdelingsnavn => {utsalg, postnumre, poststeder}]. */
+/** Reglene per avdeling: [avdelingsnavn => {utsalg, postnumre, poststeder, varsel}]. */
 function amendo_wolt_regler() {
     $raa = json_decode((string) get_option('amendo_wolt_utsalg', '{}'), true);
     $ut = [];
     foreach (is_array($raa) ? $raa : [] as $navn => $r) {
         if (!is_array($r)) continue;
-        $ut[(string) $navn] = [
-            'utsalg'     => sanitize_text_field((string) ($r['utsalg'] ?? '')),
-            'postnumre'  => sanitize_text_field((string) ($r['postnumre'] ?? '')),
-            'poststeder' => sanitize_text_field((string) ($r['poststeder'] ?? '')),
-        ];
+        $ut[(string) $navn] = amendo_wolt_regel_rens($r);
     }
     return $ut;
+}
+
+function amendo_wolt_regel_rens(array $r) {
+    return [
+        'utsalg'     => sanitize_text_field((string) ($r['utsalg'] ?? '')),
+        'postnumre'  => sanitize_text_field((string) ($r['postnumre'] ?? '')),
+        'poststeder' => sanitize_text_field((string) ($r['poststeder'] ?? '')),
+        // 1.4.30: hvem som får varsel når Wolt avviser en levering fra avdelingens utsalg.
+        'varsel'     => implode(', ', amendo_wolt_adresser((string) ($r['varsel'] ?? ''))),
+    ];
 }
 
 /** «0150-0199, 0250» inneholder postnummeret? */
@@ -224,13 +237,19 @@ function amendo_wolt_tilbud(WP_REST_Request $request) {
  * @return array{kode:int, raa:string, json:array}|WP_Error
  */
 function amendo_wolt_post(array $oppsett, array $utsalg, $sti, array $data) {
+    return amendo_wolt_kall($oppsett, $utsalg, 'POST', $sti, $data);
+}
+
+/** Som amendo_wolt_post, med valgfri metode (PATCH for kansellering). */
+function amendo_wolt_kall(array $oppsett, array $utsalg, $metode, $sti, array $data) {
     $base = ($oppsett['env'] ?? '') === 'production' ? 'https://daas-public-api.wolt.com' : 'https://daas-public-api.development.dev.woltapi.com';
     $nokkel = '';
     foreach ([$utsalg['merchant_key'] ?? '', $utsalg['api_key'] ?? '', $oppsett['api_key'] ?? ''] as $k) {
         if (trim((string) $k) !== '') { $nokkel = trim((string) $k); break; }
     }
     if ($nokkel === '') return new WP_Error('amendo_wolt_nokkel', 'Wolt-nøkkelen mangler i Wolt-tillegget.');
-    $res = wp_remote_post($base . $sti, [
+    $res = wp_remote_request($base . $sti, [
+        'method'  => $metode,
         'timeout' => 15,
         'headers' => ['Authorization' => 'Bearer ' . $nokkel, 'Content-Type' => 'application/json', 'Accept' => 'application/json'],
         'body'    => wp_json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
@@ -273,13 +292,10 @@ add_action('amendo_lagre_innstillinger', function(array $post) {
     foreach (is_array($inn['rader'] ?? null) ? $inn['rader'] : [] as $r) {
         $navn = sanitize_text_field((string) ($r['avdeling'] ?? ''));
         if ($navn === '') continue;
-        $ut[$navn] = [
-            'utsalg'     => sanitize_text_field((string) ($r['utsalg'] ?? '')),
-            'postnumre'  => sanitize_text_field((string) ($r['postnumre'] ?? '')),
-            'poststeder' => sanitize_text_field((string) ($r['poststeder'] ?? '')),
-        ];
+        $ut[$navn] = amendo_wolt_regel_rens($r);
     }
     update_option('amendo_wolt_utsalg', wp_json_encode((object) $ut));
+    if (array_key_exists('varsel', $inn)) update_option('amendo_wolt_varsel_epost', implode(', ', amendo_wolt_adresser((string) $inn['varsel'])), false);
 });
 
 add_action('amendo_admin_faner', function() {
@@ -307,10 +323,10 @@ add_action('amendo_admin_paneler', function() {
                 <p class="field-help">Ingen avdelinger ennå. Legg dem til under Avdelinger først.</p>
             <?php else: ?>
             <table class="amendo-tabell">
-                <thead><tr><th>Avdeling</th><th>Wolt-utsalg</th><th>Postnumre</th><th>Poststeder</th></tr></thead>
+                <thead><tr><th>Avdeling</th><th>Wolt-utsalg</th><th>Postnumre</th><th>Poststeder</th><th>Varsel til</th></tr></thead>
                 <tbody>
                 <?php foreach ($avdelinger as $i => $navn):
-                    $r = $regler[$navn] ?? ['utsalg' => '', 'postnumre' => '', 'poststeder' => ''];
+                    $r = $regler[$navn] ?? ['utsalg' => '', 'postnumre' => '', 'poststeder' => '', 'varsel' => ''];
                     $p = 'wolt_utsalg[rader][' . $i . ']';
                 ?>
                 <tr class="wolt-rad">
@@ -328,13 +344,28 @@ add_action('amendo_admin_paneler', function() {
                     </td>
                     <td><input type="text" name="<?php echo esc_attr($p); ?>[postnumre]" value="<?php echo esc_attr($r['postnumre']); ?>" placeholder="0150-0199, 0250"></td>
                     <td><input type="text" name="<?php echo esc_attr($p); ?>[poststeder]" value="<?php echo esc_attr($r['poststeder']); ?>" placeholder="Oslo, Nittedal"></td>
+                    <td><input type="text" name="<?php echo esc_attr($p); ?>[varsel]" value="<?php echo esc_attr($r['varsel'] ?? ''); ?>" placeholder="butikk@eksempel.no" aria-label="Varsel til for <?php echo esc_attr($navn); ?>"></td>
                 </tr>
                 <?php endforeach; ?>
                 </tbody>
             </table>
-            <p class="field-help">Postnumre: enkeltnumre eller fra–til, skilt med komma. Poststeder: skilt med komma, store og små bokstaver spiller ingen rolle.</p>
+            <p class="field-help">Postnumre: enkeltnumre eller fra–til, skilt med komma. Poststeder: skilt med komma, store og små bokstaver spiller ingen rolle. Varsel til: hvem som får e-post når Wolt avviser eller ikke leverer en levering fra avdelingens utsalg (flere skilt med komma).</p>
             <?php endif; ?>
+            <div class="amendo-field">
+                <label for="wolt_varsel_felles">Varsel til, når avdelingen ikke har egen adresse</label>
+                <input type="text" id="wolt_varsel_felles" name="wolt_utsalg[varsel]" value="<?php echo esc_attr((string) get_option('amendo_wolt_varsel_epost', '')); ?>" placeholder="<?php echo esc_attr((string) get_option('admin_email', '')); ?>">
+                <p class="field-help">Tomt = admin-e-posten (<?php echo esc_html((string) get_option('admin_email', '')); ?>).</p>
+            </div>
         </div>
+        <div class="amendo-card" id="wolt-webhook">
+            <h2>Statusmeldinger fra Wolt</h2>
+            <p class="amendo-desc">Wolt sender beskjed når en levering endrer status. Avviser eller kansellerer Wolt en levering, får avdelingen e-post, og ordren merkes i ordrelisten. Ordrestatusen endres ikke.</p>
+            <div class="amendo-field">
+                <label>Webhook-URL hos Wolt (callback_url)</label>
+                <p><code id="wolt-webhook-url"><?php echo esc_html(rest_url('amendo-settings/v1/wolt/webhook')); ?></code></p>
+            </div>
+        </div>
+        <?php amendo_hemmelighet_kort('wolt_webhook'); ?>
     </div>
     <?php
 });

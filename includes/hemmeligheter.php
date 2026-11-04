@@ -12,8 +12,12 @@
 
 if (!defined('ABSPATH')) exit;
 
+/**
+ * Filteret amendo_hemmeligheter (1.4.30) lar en modul legge til sin egen, med
+ * samme felter. Kortet vises der modulen kaller amendo_hemmelighet_kort().
+ */
 function amendo_hemmeligheter() {
-    return [
+    return apply_filters('amendo_hemmeligheter', [
         'kasse' => [
             'option'      => 'amendo_kasse_secret',
             'tittel'      => 'Kasse-secret',
@@ -30,7 +34,7 @@ function amendo_hemmeligheter() {
             'bekreft_ny'  => 'Generere revaliderings-secret? Den må legges inn i Vercel og prosjektet redeployes før nettsiden oppdateres ved lagring.',
             'bekreft_bytt'=> 'Erstatte revaliderings-secreten? Nettsiden oppdateres ikke ved lagring før den nye er lagt inn i Vercel og prosjektet er redeployet.',
         ],
-    ];
+    ]);
 }
 
 /** Kalles fra lagringen. Lager ny secret der «Generer ny» er brukt. */

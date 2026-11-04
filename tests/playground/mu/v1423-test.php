@@ -46,7 +46,7 @@ function amendo_test_skriv_sikkert($opt, $verdi) {
 add_filter('pre_http_request', function($svar, $args, $url) {
     if (strpos($url, 'daas-public-api') === false) return $svar;
     $kall = get_option('amendo_test_wolt_kall', []);
-    $kall[] = ['url' => $url, 'auth' => $args['headers']['Authorization'] ?? null, 'body' => json_decode((string) ($args['body'] ?? ''), true)];
+    $kall[] = ['url' => $url, 'metode' => $args['method'] ?? 'GET', 'auth' => $args['headers']['Authorization'] ?? null, 'body' => json_decode((string) ($args['body'] ?? ''), true)];
     update_option('amendo_test_wolt_kall', $kall, false);
     $c = json_decode((string) get_option('amendo_test_wolt', '{}'), true) ?: [];
     if (!empty($c['nede'])) return new WP_Error('http_request_failed', 'cURL error 28: timeout');
