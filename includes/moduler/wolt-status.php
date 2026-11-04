@@ -21,10 +21,9 @@
  * _ab_wolt_delivery_id enn meldingen. Ukjent ordre = 200 { funnet: false },
  * ingenting endres, og Wolt prøver ikke igjen i det uendelige.
  *
- * ⚠ Oppslaget på metaen går rett mot databasen (HPOS-tabellen eller
- * postmeta), og treffet sjekkes mot ordren etterpå. wc_get_orders() med
- * meta_query ble ikke filtrert i Playground-testen (den ga den nyeste ordren
- * uansett referanse), og da traff en melding feil ordre.
+ * ⚠ Oppslaget på metaen går via amendo_ordrer_med_meta() (includes/ordrer.php),
+ * ikke wc_get_orders() med meta_query: det filteret hoppes over når ordrene
+ * lagres som innlegg, og da traff en melding den nyeste ordren.
  *
  * Hver statushendelse: _ab_wolt_status oppdateres og et ordrenotat med status
  * og årsak. En sluttstatus (rejected, delivered, not_delivered) overskrives
@@ -142,20 +141,10 @@ function amendo_wolt_webhook(WP_REST_Request $req) {
     return amendo_wolt_behandle($ordre, $type, $d, (string) ($h['dispatched_at'] ?? ''));
 }
 
-/** Nyeste ordre med meta $nokkel = $verdi, eller null. Se toppen. */
+/** Nyeste ordre med meta $nokkel = $verdi, eller null. Se includes/ordrer.php. */
 function amendo_wolt_ordre_med($nokkel, $verdi) {
-    global $wpdb;
-    if ($verdi === '') return null;
-    $util = 'Automattic\WooCommerce\Utilities\OrderUtil';
-    $hpos = class_exists($util) && $util::custom_orders_table_usage_is_enabled();
-    $ider = $hpos
-        ? $wpdb->get_col($wpdb->prepare("SELECT order_id FROM {$wpdb->prefix}wc_orders_meta WHERE meta_key = %s AND meta_value = %s ORDER BY order_id DESC LIMIT 5", $nokkel, $verdi))
-        : $wpdb->get_col($wpdb->prepare("SELECT pm.post_id FROM {$wpdb->postmeta} pm JOIN {$wpdb->posts} p ON p.ID = pm.post_id WHERE p.post_type = 'shop_order' AND pm.meta_key = %s AND pm.meta_value = %s ORDER BY pm.post_id DESC LIMIT 5", $nokkel, $verdi));
-    foreach ((array) $ider as $id) {
-        $o = wc_get_order((int) $id);
-        if ($o instanceof WC_Order && (string) $o->get_meta($nokkel) === $verdi) return $o;
-    }
-    return null;
+    $ider = amendo_ordrer_med_meta($nokkel, $verdi, 1);
+    return $ider ? wc_get_order($ider[0]) : null;
 }
 
 function amendo_wolt_er_wolt_ordre(WC_Order $o) {
