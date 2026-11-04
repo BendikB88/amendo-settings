@@ -4,7 +4,8 @@
 // med pris fra dagens WooCommerce-priser, `pakker` og `ref` i POST
 // /b2b-soknad (sjekket før noe lagres, med i svaret), visningen i Søknader og
 // på brukerprofilen, og admin.js i jsdom. Testrutene er i mu/v1431-test.php.
-// Se includes/moduler/bedriftspakker.php.
+// 1.4.33: nivåer (Liten / Medium / Stor) med egen tekst og oppskrift, i GET
+// og som `niva` i søknaden. Se includes/moduler/bedriftspakker.php.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { JSDOM } from 'jsdom';
@@ -163,6 +164,46 @@ l = r.json.pakker.find(p => p.id === 'fredagskos').linjer[0];
 sjekk('tilbudspris gjelder', l.pris_inkl === 20 && l.pris_eks === 16, l);
 await pris(P.bolle, '25');
 
+// ── Nivåer (1.4.33) ─────────────────────────────────────────────────────────
+console.log('\nNivåer');
+const lagreNivaer = nivaer => lagre({ amendo_endret: { bedriftspakker: '1' }, bedriftspakker: { finnes: '1', pakker: medId.map((p, i) => (i === 0 ? { ...p, nivaer } : p)) } });
+sjekk('uten nivåer: nivaer [] i GET, pakken ellers som før', (await hent()).json.pakker.every(p => Array.isArray(p.nivaer) && p.nivaer.length === 0));
+await lagreNivaer([
+  { navn: 'Liten', tekst: 'Til små møter <i>x</i>', per_personer: '5', linjer: [{ produkt: P.bolle, antall: '10' }, { produkt: 999999, antall: '1' }] },
+  { navn: 'Stor', per_personer: '20', linjer: [{ produkt: P.bolle, antall: '40' }, { produkt: P.kaffe, antall: '3' }, { produkt: P.kladd, antall: '1' }] },
+  { navn: '', per_personer: '3' },
+  { navn: 'Liten' },
+]);
+t = await tilstand();
+let nv = t.pakker?.[0]?.nivaer || [];
+sjekk('lagret: nivået uten navn er borte, nøkkel fra navnet og unik (liten-2)', nv.map(n => n.nokkel).join() === 'liten,stor,liten-2', nv.map(n => n.nokkel));
+sjekk('teksten uten HTML, per_personer, linjene renset som pakkens', nv[0]?.tekst === 'Til små møter x' && nv[0]?.per_personer === 5 && JSON.stringify(nv[0]?.linjer) === JSON.stringify([{ produkt: P.bolle, antall: 10 }]) && nv[2]?.per_personer === 1, nv[0]);
+await lagreNivaer([
+  { navn: 'Stor', per_personer: '20' },
+  { nokkel: 'liten', navn: 'Liten pluss', per_personer: '5' },
+  { nokkel: 'stor', navn: 'Stor', per_personer: '20' },
+]);
+t = await tilstand();
+nv = t.pakker?.[0]?.nivaer || [];
+sjekk('nytt navn: nøkkelen står; nytt nivå øverst med samme navn får en ledig', nv.map(n => n.nokkel).join() === 'stor-2,liten,stor' && nv[1]?.navn === 'Liten pluss', nv.map(n => [n.nokkel, n.navn]));
+const NIVAER = [
+  { nokkel: 'liten', navn: 'Liten', tekst: 'Til små møter', per_personer: '5', linjer: [{ produkt: P.bolle, antall: '10' }] },
+  { nokkel: 'stor', navn: 'Stor', tekst: '', per_personer: '20', linjer: [{ produkt: P.bolle, antall: '40' }, { produkt: P.kaffe, antall: '3' }, { produkt: P.kladd, antall: '1' }] },
+];
+await lagreNivaer(NIVAER);
+medId[0] = { ...medId[0], nivaer: NIVAER };
+html = await side();
+sjekk('admin: nivåene med navn, oppskrift og mal', html.includes('name="bedriftspakker[pakker][0][nivaer][1][navn]" value="Stor"') && html.includes('data-prefiks="bedriftspakker[pakker][0][nivaer][1][linjer]"') && html.includes('name="bedriftspakker[pakker][0][nivaer][1][linjer][1][produkt]"') && html.includes('id="bp-niva-mal"'));
+r = await hent();
+const fkn = r.json.pakker.find(p => p.id === 'fredagskos') || {};
+sjekk('GET: nivaer { nokkel, navn, tekst, per_personer, linjer, pris_eks, pris_inkl }', JSON.stringify(fkn.nivaer) === JSON.stringify([
+  { nokkel: 'liten', navn: 'Liten', tekst: 'Til små møter', per_personer: 5, linjer: [{ produkt_id: P.bolle, variant_id: null, navn: 'Bolle', antall: 10, pris_eks: 20, pris_inkl: 25 }], pris_eks: 200, pris_inkl: 250 },
+  { nokkel: 'stor', navn: 'Stor', tekst: '', per_personer: 20, linjer: [
+    { produkt_id: P.bolle, variant_id: null, navn: 'Bolle', antall: 40, pris_eks: 20, pris_inkl: 25 },
+    { produkt_id: P.kaffe, variant_id: null, navn: 'Kaffe', antall: 3, pris_eks: 40, pris_inkl: 50 }], pris_eks: 920, pris_inkl: 1150 },
+]), fkn.nivaer);
+sjekk('pakkens egen oppskrift står; kladden i et nivå gjør pakken ufullstendig', fkn.pris_eks === 460 && fkn.linjer?.length === 2 && fkn.ufullstendig === true, [fkn.pris_eks, fkn.ufullstendig]);
+
 // ── Søknaden ────────────────────────────────────────────────────────────────
 console.log('\nSøknaden: feil (ingenting lagres)');
 const feil = async (navn, ekstra, kode = 'amendo_b2b_soknad_ugyldig_pakke') => {
@@ -185,12 +226,15 @@ await feil('antall_personer over 10 000', pakke('motemat', { antall_personer: 10
 await feil('pakker som tekst', { pakker: 'fredagskos' });
 await feil('pakker som ett objekt, ikke en liste', { pakker: { pakke_id: 'motemat' } });
 await feil('21 pakker', { pakker: Array.from({ length: 21 }, () => ({ pakke_id: 'motemat' })) });
+await feil('nivå som pakken ikke har', pakke('fredagskos', { niva: 'mega' }));
+await feil('nivå på en pakke uten nivåer', pakke('motemat', { niva: 'liten' }));
+await feil('nivå som ikke er tekst', pakke('fredagskos', { niva: ['stor'] }));
 await feil('ugyldig selgerkode', { ref: '<script>' }, 'amendo_b2b_soknad_ugyldig_ref');
 await feil('selgerkode over 40 tegn', { ref: 'a'.repeat(41) }, 'amendo_b2b_soknad_ugyldig_ref');
 
 console.log('\nSøknaden: lagres');
-r = await soknad({ bruker_id: id('ok'), org_nr: '911 222 333', ref: 'ola-12', pakker: [{ pakke_id: 'fredagskos', navn: 'Fredagskos (fra nettsiden)', type: 'engang', antall_personer: 25, dag: 'fredag', hyppighet: 'annenhver_uke', pris_eks_per_levering: 1150, anslag_eks_per_maned: 2491.67, fra_eks_per_person: null }] });
-const ONSKE_OK = { pakke_id: 'fredagskos', navn: 'Fredagskos', type: 'fast', antall_personer: 25, kake_produkt_id: null, kake_variant_id: null, kake_navn: '', dag: 'fredag', hyppighet: 'annenhver_uke',
+r = await soknad({ bruker_id: id('ok'), org_nr: '911 222 333', ref: 'ola-12', pakker: [{ pakke_id: 'fredagskos', navn: 'Fredagskos (fra nettsiden)', type: 'engang', niva: 'stor', antall_personer: 25, dag: 'fredag', hyppighet: 'annenhver_uke', pris_eks_per_levering: 1150, anslag_eks_per_maned: 2491.67, fra_eks_per_person: null }] });
+const ONSKE_OK = { pakke_id: 'fredagskos', navn: 'Fredagskos', type: 'fast', niva: 'stor', niva_navn: 'Stor', antall_personer: 25, kake_produkt_id: null, kake_variant_id: null, kake_navn: '', dag: 'fredag', hyppighet: 'annenhver_uke',
   nettsiden: { navn: 'Fredagskos (fra nettsiden)', kake_navn: '', pris_eks_per_levering: 1150, anslag_eks_per_maned: 2491.67, fra_eks_per_person: null } };
 sjekk('svaret: ok, status og org_nr som før, pluss pakker og ref slik de ble lagret', r.status === 200 && r.json?.ok === true && r.json.status === 'venter' && r.json.org_nr === '911222333' && JSON.stringify(r.json.pakker) === JSON.stringify([ONSKE_OK]) && r.json.ref === 'ola-12', r.tekst);
 let u = (await tilstand([id('ok')])).brukere[id('ok')];
@@ -201,7 +245,7 @@ u = (await tilstand([id('kake')])).brukere[id('kake')];
 sjekk('bursdag: kaken fra vår liste, kakenavnet vårt, nettsidens under «nettsiden»', r.status === 200 && u.onske?.[0]?.kake_produkt_id === P.kake && u.onske[0].kake_variant_id === P.k12 && u.onske[0].kake_navn === 'Sjokoladekake – 12 personer' && u.onske[0].nettsiden.kake_navn === 'Hva som helst' && u.onske[0].antall_personer === 40 && u.ref === '', [r.status, u]);
 r = await soknad({ bruker_id: id('enkel'), org_nr: '911222333', pakker: [{ pakke_id: 'motemat', antall_personer: 12, fra_eks_per_person: 'mye', pris_eks_per_levering: -5, navn: '<b>Møtemat</b>' }] });
 u = (await tilstand([id('enkel')])).brukere[id('enkel')];
-sjekk('pakke som er av godtas; anslag som ikke er tall blir null, navnet uten HTML', r.status === 200 && u.onske?.[0]?.pakke_id === 'motemat' && u.onske[0].nettsiden.fra_eks_per_person === null && u.onske[0].nettsiden.pris_eks_per_levering === null && u.onske[0].nettsiden.navn === 'Møtemat', [r.status, u]);
+sjekk('pakke som er av godtas; uten nivå = \'\'; anslag som ikke er tall blir null, navnet uten HTML', r.status === 200 && u.onske?.[0]?.pakke_id === 'motemat' && u.onske[0].niva === '' && u.onske[0].niva_navn === '' && u.onske[0].nettsiden.fra_eks_per_person === null && u.onske[0].nettsiden.pris_eks_per_levering === null && u.onske[0].nettsiden.navn === 'Møtemat', [r.status, u]);
 r = await soknad({ bruker_id: id('ref'), org_nr: '911222333', ref: ' Kari Selger ' });
 u = (await tilstand([id('ref')])).brukere[id('ref')];
 sjekk('bare selgerkode (trimmet): svaret har pakker [] og ref', r.status === 200 && JSON.stringify(r.json?.pakker) === '[]' && r.json?.ref === 'Kari Selger' && u.ref === 'Kari Selger' && u.onske === '', [r.json, u]);
@@ -218,11 +262,11 @@ html = await side();
 const soknader = html.slice(html.indexOf('id="b2b-soknader"'), html.indexOf('id="b2b-kunder"'));
 const rad = n => { const i = soknader.indexOf(`data-bruker="${id(n)}"`); return i < 0 ? '' : soknader.slice(i, soknader.indexOf('</tr>', i)); };
 sjekk('kolonnen Pakke i Søknader', soknader.includes('<th>Pakke</th>'));
-sjekk('pakken med personer, dag, hyppighet og anslaget, og selgerkoden', rad('ok').includes('Fredagskos · 25 personer · fredag · annenhver uke · anslag fra nettsiden ca. 2 492 kr/mnd eks. mva') && rad('ok').includes('Selgerkode: PER-1'), rad('ok'));
+sjekk('pakken med personer, dag, hyppighet og anslaget, og selgerkoden', rad('ok').includes('Fredagskos – Stor · 25 personer · fredag · annenhver uke · anslag fra nettsiden ca. 2 492 kr/mnd eks. mva') && rad('ok').includes('Selgerkode: PER-1'), rad('ok'));
 sjekk('kaken', rad('kake').includes('Kakeabonnement · 40 personer · Sjokoladekake – 12 personer · anslag fra nettsiden ca. 1 467 kr/mnd eks. mva'), rad('kake'));
 sjekk('uten pakke: «—»', rad('tom').includes('<td class="b2b-pakke">—</td>'), rad('tom'));
 const p1 = await profil(id('ok'));
-sjekk('brukerprofilen (admin): pakken, selgerkoden, når, og at anslagene ikke er avtalt', p1.includes('Bedriftspakke fra søknaden') && p1.includes('Fredagskos · 25 personer') && p1.includes('Selgerkode: PER-1') && p1.includes('Sendt ') && p1.includes('ikke avtalte priser'), p1.slice(0, 400));
+sjekk('brukerprofilen (admin): pakken, selgerkoden, når, og at anslagene ikke er avtalt', p1.includes('Bedriftspakke fra søknaden') && p1.includes('Fredagskos – Stor · 25 personer') && p1.includes('Selgerkode: PER-1') && p1.includes('Sendt ') && p1.includes('ikke avtalte priser'), p1.slice(0, 400));
 sjekk('brukerprofilen uten pakke: ingen seksjon', !(await profil(id('tom'))).includes('Bedriftspakke'));
 sjekk('kunden selv ser den ikke', !(await profil(id('ok'), 'customer')).includes('Bedriftspakke'));
 
@@ -262,6 +306,16 @@ sjekk('produktsøket startes for de nye feltene', produktsok >= 3, produktsok);
 const navn = ny.querySelector('input[name$="[navn]"]');
 navn.value = 'Lunsj'; navn.dispatchEvent(new w.Event('input', { bubbles: true }));
 sjekk('tittelen følger navnet', ny.querySelector('.bp-tittel').textContent === 'Lunsj');
+ny.querySelector('.bp-legg-til-niva').click();
+const niva = ny.querySelector('.bp-nivaer .bp-niva');
+const nivaNavn = niva?.querySelector('input[name$="[navn]"]');
+sjekk('nytt nivå i den nye pakken', !!nivaNavn && new RegExp(`^bedriftspakker\\[pakker\\]\\[${nr}\\]\\[nivaer\\]\\[\\d+\\]\\[navn\\]$`).test(nivaNavn.name), nivaNavn?.name);
+const egneFør = ny.querySelectorAll(':scope .avdeling-body > .amendo-field > .bp-oppskrift > .bp-linjer > .bp-linje').length;
+niva.querySelector('.bp-legg-til-linje').click();
+const nivaLinje = niva.querySelector('.bp-linjer select');
+sjekk('ny linje i nivået havner i nivåets oppskrift, ikke pakkens', !!nivaLinje && new RegExp(`^bedriftspakker\\[pakker\\]\\[${nr}\\]\\[nivaer\\]\\[\\d+\\]\\[linjer\\]\\[\\d+\\]\\[produkt\\]$`).test(nivaLinje.name) && ny.querySelectorAll(':scope .avdeling-body > .amendo-field > .bp-oppskrift > .bp-linjer > .bp-linje').length === egneFør, nivaLinje?.name);
+niva.querySelector('.bp-slett-niva').click();
+sjekk('slett nivå', !ny.querySelector('.bp-niva'));
 ny.querySelector('.bp-slett-kake').click();
 ny.querySelector('.bp-slett-linje').click();
 sjekk('slett kake og linje', !ny.querySelector('.bp-kaker select') && !ny.querySelector('.bp-linjer select'));

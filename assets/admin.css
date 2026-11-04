@@ -481,3 +481,4 @@
 .bp-valg { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 12px; }
 .bp-valg label { font-weight: normal; text-transform: none; letter-spacing: 0; display: inline-flex; align-items: center; gap: 4px; }
 #bp-advarsler ul { margin: 6px 0 0 18px; list-style: disc; }
+.bp-niva { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin-bottom: 10px; background: #f9fafb; }

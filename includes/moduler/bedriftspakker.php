@@ -32,7 +32,13 @@
  *         kaker: [{ produkt_id, variant_id|null, navn, storrelse, personer|null, pris_eks, pris_inkl }],
  *         dager: ['mandag', …],                (tomme utenom fast)
  *         hyppigheter: [{ nokkel, navn, per_maned }],
+ *         nivaer: [{ nokkel, navn, tekst, per_personer, linjer, pris_eks, pris_inkl }],
  *         ufullstendig }] }
+ *
+ * Nivåer (1.4.33, valgfrie): f.eks. Liten / Medium / Stor, hver med egen
+ * kort tekst og egen oppskrift (linjer for per_personer personer, i samme
+ * form som pakkens). `nivaer` er [] for en pakke uten nivåer, og da er
+ * pakken som før. `nokkel` er stabil (lages fra navnet første gang).
  *
  * `produkt_id` er alltid hovedproduktet, `variant_id` varianten (null for et
  * enkelt produkt). Priser per stk. En linje eller kake med et produkt som er
@@ -44,21 +50,22 @@
  * POST /b2b-soknad (modulen B2B) tar i tillegg, begge valgfrie:
  *
  *     ref:    selgerkoden, 1–40 tegn: bokstaver, tall, mellomrom, . _ -
- *     pakker: [{ pakke_id, navn, type, antall_personer,
+ *     pakker: [{ pakke_id, navn, type, niva, antall_personer,
  *                kake_produkt_id, kake_variant_id, kake_navn, dag, hyppighet,
  *                pris_eks_per_levering, anslag_eks_per_maned, fra_eks_per_person }]
  *
  * Valget sjekkes mot pakken FØR noe lagres, og feil gir 400 uten at søknaden
  * lagres: ukjent `pakke_id`, `dag`/`hyppighet` som pakken ikke har (eller på
  * en pakke som ikke er fast), en kake som ikke er i pakkens liste (eller på en
- * pakke som ikke er bursdag), `antall_personer` utenfor 1–10 000. En pakke som
- * er slått av, godtas (kunden kan ha hatt siden åpen).
+ * pakke som ikke er bursdag), `antall_personer` utenfor 1–10 000, `niva` som
+ * pakken ikke har (eller på en pakke uten nivåer). `niva` kan utelates. En
+ * pakke som er slått av, godtas (kunden kan ha hatt siden åpen).
  *
  * ⚠ Navn, type og kakenavn lagres fra VÅRE pakker. Det frontenden sendte av
  * navn og priser (anslagene) lagres under `nettsiden`, bare til visning — det
  * er ikke en pris noen har avtalt. Lagret på brukeren:
  *
- *     _amendo_bp_onske   [{ pakke_id, navn, type, antall_personer, kake_produkt_id,
+ *     _amendo_bp_onske   [{ pakke_id, navn, type, niva, niva_navn, antall_personer, kake_produkt_id,
  *                           kake_variant_id, kake_navn, dag, hyppighet,
  *                           nettsiden: { navn, kake_navn, pris_eks_per_levering,
  *                                        anslag_eks_per_maned, fra_eks_per_person } }]
@@ -97,6 +104,7 @@ const AMENDO_BP_HYPPIGHETER = [
 const AMENDO_BP_MAKS_PERSONER = 10000;
 const AMENDO_BP_MAKS_PAKKER = 20;
 const AMENDO_BP_ID = '/^[a-z0-9][a-z0-9-]{0,39}$/';
+const AMENDO_BP_MAKS_NIVAER = 10;
 
 // ── Pakkene ─────────────────────────────────────────────────────────────────
 
@@ -150,23 +158,42 @@ function amendo_bp_rens(array $p, array &$brukt, array $reservert, $nr, $lagring
     $navn = sanitize_text_field((string) ($p['navn'] ?? ''));
     if ($navn === '') return null;
 
-    $id = is_scalar($p['id'] ?? null) ? strtolower((string) $p['id']) : '';
-    if (!preg_match(AMENDO_BP_ID, $id) || isset($brukt[$id])) {
-        $id = substr(trim(preg_replace('/[^a-z0-9-]+/', '-', sanitize_title($navn)), '-'), 0, 40) ?: 'pakke';
-        $base = substr($id, 0, 36);
-        for ($n = 2; isset($brukt[$id]) || isset($reservert[$id]); $n++) $id = $base . '-' . $n;
-    }
-    $brukt[$id] = true;
+    $id = amendo_bp_unik($p['id'] ?? '', $navn, 'pakke', $brukt, $reservert);
 
     $finnes = function($pid) use ($lagring) { return $pid > 0 && (!$lagring || wc_get_product($pid)); };
+    $rens_linjer = function($liste) use ($finnes) {
+        $ut = [];
+        foreach (is_array($liste) ? $liste : [] as $l) {
+            if (!is_array($l)) continue;
+            $pid = (int) ($l['produkt'] ?? 0);
+            $antall = round((float) str_replace(',', '.', (string) ($l['antall'] ?? '')), 2);
+            if (!$finnes($pid) || $antall <= 0) continue;
+            $ut[] = ['produkt' => $pid, 'antall' => min($antall, 10000.0)];
+        }
+        return $ut;
+    };
+    $linjer = $rens_linjer($p['linjer'] ?? []);
 
-    $linjer = [];
-    foreach (is_array($p['linjer'] ?? null) ? $p['linjer'] : [] as $l) {
-        if (!is_array($l)) continue;
-        $pid = (int) ($l['produkt'] ?? 0);
-        $antall = round((float) str_replace(',', '.', (string) ($l['antall'] ?? '')), 2);
-        if (!$finnes($pid) || $antall <= 0) continue;
-        $linjer[] = ['produkt' => $pid, 'antall' => min($antall, 10000.0)];
+    // Nivåene (1.4.33). Nøklene som finnes, settes av først, som pakke-ID-ene.
+    $inn = is_array($p['nivaer'] ?? null) ? array_values($p['nivaer']) : [];
+    $n_reservert = [];
+    foreach ($inn as $nv) {
+        $k = is_array($nv) && is_scalar($nv['nokkel'] ?? null) ? strtolower((string) $nv['nokkel']) : '';
+        if ($k !== '' && preg_match(AMENDO_BP_ID, $k) && sanitize_text_field((string) ($nv['navn'] ?? '')) !== '') $n_reservert[$k] = true;
+    }
+    $nivaer = [];
+    $n_brukt = [];
+    foreach ($inn as $nv) {
+        if (!is_array($nv) || count($nivaer) >= AMENDO_BP_MAKS_NIVAER) continue;
+        $nnavn = sanitize_text_field((string) ($nv['navn'] ?? ''));
+        if ($nnavn === '') continue;
+        $nivaer[] = [
+            'nokkel'       => amendo_bp_unik($nv['nokkel'] ?? '', $nnavn, 'niva', $n_brukt, $n_reservert),
+            'navn'         => $nnavn,
+            'tekst'        => sanitize_textarea_field((string) ($nv['tekst'] ?? '')),
+            'per_personer' => max(1, min(1000, (int) ($nv['per_personer'] ?? 1))),
+            'linjer'       => $rens_linjer($nv['linjer'] ?? []),
+        ];
     }
 
     $type = array_key_exists((string) ($p['type'] ?? ''), AMENDO_BP_TYPER) ? (string) $p['type'] : 'engang';
@@ -198,7 +225,23 @@ function amendo_bp_rens(array $p, array &$brukt, array $reservert, $nr, $lagring
         'dager'        => $type === 'fast' ? amendo_bp_utvalg($p['dager'] ?? [], AMENDO_BP_DAGER) : [],
         'hyppigheter'  => $type === 'fast' ? amendo_bp_utvalg($p['hyppigheter'] ?? [], array_keys(AMENDO_BP_HYPPIGHETER)) : [],
         'kaker'        => $kaker,
+        'nivaer'       => $nivaer,
     ];
+}
+
+/**
+ * En gyldig, unik nøkkel: den gitte når den er gyldig og ledig, ellers laget
+ * av navnet (med -2, -3 … når den er brukt eller satt av).
+ */
+function amendo_bp_unik($gitt, $navn, $standard, array &$brukt, array $reservert) {
+    $k = is_scalar($gitt) ? strtolower((string) $gitt) : '';
+    if (!preg_match(AMENDO_BP_ID, $k) || isset($brukt[$k])) {
+        $k = substr(trim(preg_replace('/[^a-z0-9-]+/', '-', sanitize_title($navn)), '-'), 0, 40) ?: $standard;
+        $base = substr($k, 0, 36);
+        for ($n = 2; isset($brukt[$k]) || isset($reservert[$k]); $n++) $k = $base . '-' . $n;
+    }
+    $brukt[$k] = true;
+    return $k;
 }
 
 // ── Produktene ──────────────────────────────────────────────────────────────
@@ -268,6 +311,7 @@ function amendo_bp_advarsler(array $pakker) {
     $ut = [];
     foreach ($pakker as $pk) {
         $ider = array_merge(array_column($pk['linjer'], 'produkt'), array_column($pk['kaker'], 'produkt'));
+        foreach ($pk['nivaer'] as $nv) $ider = array_merge($ider, array_column($nv['linjer'], 'produkt'));
         foreach (array_unique($ider) as $pid) {
             $navn = amendo_bp_visningsnavn($pid) . ' (#' . $pid . ')';
             if ($feil = amendo_bp_produkt_feil($pid)) {
@@ -295,6 +339,33 @@ function amendo_bp_personer_fra_tekst($tekst) {
     return preg_match('/(\d+)\s*(?:pers|biter|stk)/iu', (string) $tekst, $m) ? (int) $m[1] : null;
 }
 
+/**
+ * Linjene i kontraktens form, og summen. Produkter som ikke kan selges, er
+ * utelatt og setter $ufullstendig.
+ */
+function amendo_bp_linjer_ut(array $linjer, &$ufullstendig) {
+    $ut = [];
+    $sum = ['eks' => 0.0, 'inkl' => 0.0];
+    foreach ($linjer as $l) {
+        $p = wc_get_product($l['produkt']);
+        if (!amendo_bp_produkt_ok($p)) { $ufullstendig = true; continue; }
+        [$hoved, $variant] = amendo_bp_ider($p);
+        $eks  = round((float) wc_get_price_excluding_tax($p), 2);
+        $inkl = round((float) wc_get_price_including_tax($p), 2);
+        $sum['eks']  += $l['antall'] * $eks;
+        $sum['inkl'] += $l['antall'] * $inkl;
+        $ut[] = [
+            'produkt_id' => $hoved,
+            'variant_id' => $variant,
+            'navn'       => amendo_bp_visningsnavn($p->get_id()),
+            'antall'     => $l['antall'],
+            'pris_eks'   => $eks,
+            'pris_inkl'  => $inkl,
+        ];
+    }
+    return ['linjer' => $ut, 'pris_eks' => round($sum['eks'], 2), 'pris_inkl' => round($sum['inkl'], 2)];
+}
+
 function amendo_bp_rest() {
     $pakker = array_values(array_filter(amendo_bp_alle(), function($pk) { return $pk['aktiv']; }));
     usort($pakker, function($a, $b) { return $a['sortering'] <=> $b['sortering']; });
@@ -302,24 +373,11 @@ function amendo_bp_rest() {
     $ut = [];
     foreach ($pakker as $pk) {
         $ufullstendig = false;
-        $linjer = [];
-        $sum = ['eks' => 0.0, 'inkl' => 0.0];
-        foreach ($pk['linjer'] as $l) {
-            $p = wc_get_product($l['produkt']);
-            if (!amendo_bp_produkt_ok($p)) { $ufullstendig = true; continue; }
-            [$hoved, $variant] = amendo_bp_ider($p);
-            $eks  = round((float) wc_get_price_excluding_tax($p), 2);
-            $inkl = round((float) wc_get_price_including_tax($p), 2);
-            $sum['eks']  += $l['antall'] * $eks;
-            $sum['inkl'] += $l['antall'] * $inkl;
-            $linjer[] = [
-                'produkt_id' => $hoved,
-                'variant_id' => $variant,
-                'navn'       => amendo_bp_visningsnavn($p->get_id()),
-                'antall'     => $l['antall'],
-                'pris_eks'   => $eks,
-                'pris_inkl'  => $inkl,
-            ];
+        $egne = amendo_bp_linjer_ut($pk['linjer'], $ufullstendig);
+        $nivaer = [];
+        foreach ($pk['nivaer'] as $nv) {
+            $nivaer[] = ['nokkel' => $nv['nokkel'], 'navn' => $nv['navn'], 'tekst' => $nv['tekst'], 'per_personer' => $nv['per_personer']]
+                + amendo_bp_linjer_ut($nv['linjer'], $ufullstendig);
         }
         $kaker = [];
         foreach ($pk['kaker'] as $k) {
@@ -346,14 +404,15 @@ function amendo_bp_rest() {
             'aktiv'        => true,
             'type'         => $pk['type'],
             'per_personer' => $pk['per_personer'],
-            'linjer'       => $linjer,
-            'pris_eks'     => round($sum['eks'], 2),
-            'pris_inkl'    => round($sum['inkl'], 2),
+            'linjer'       => $egne['linjer'],
+            'pris_eks'     => $egne['pris_eks'],
+            'pris_inkl'    => $egne['pris_inkl'],
             'kaker'        => $kaker,
             'dager'        => $pk['dager'],
             'hyppigheter'  => array_map(function($h) {
                 return ['nokkel' => $h, 'navn' => AMENDO_BP_HYPPIGHETER[$h][0], 'per_maned' => round(AMENDO_BP_HYPPIGHETER[$h][1], 2)];
             }, $pk['hyppigheter']),
+            'nivaer'       => $nivaer,
             'ufullstendig' => $ufullstendig,
         ];
     }
@@ -414,6 +473,17 @@ add_filter('amendo_b2b_soknad_tillegg', function($tillegg, WP_REST_Request $req)
         if (!$pk) return amendo_bp_feil('Ukjent pakke_id.');
         $navn = '«' . $pk['navn'] . '»';
 
+        // Nivået (1.4.33): valgfritt, men må finnes i pakken.
+        $niva = $o['niva'] ?? null;
+        if ($niva !== null && !is_string($niva)) return amendo_bp_feil('niva må være tekst.');
+        $niva = (string) $niva;
+        $niva_navn = '';
+        if ($niva !== '') {
+            if (!$pk['nivaer']) return amendo_bp_feil($navn . ' har ingen nivåer.');
+            foreach ($pk['nivaer'] as $nv) if ($nv['nokkel'] === $niva) $niva_navn = $nv['navn'];
+            if ($niva_navn === '') return amendo_bp_feil('Nivået «' . $niva . '» finnes ikke i ' . $navn . '.');
+        }
+
         $personer = null;
         if (($o['antall_personer'] ?? null) !== null && $o['antall_personer'] !== '') {
             $personer = amendo_bp_heltall($o['antall_personer']);
@@ -455,6 +525,8 @@ add_filter('amendo_b2b_soknad_tillegg', function($tillegg, WP_REST_Request $req)
             'pakke_id'        => $pk['id'],
             'navn'            => $pk['navn'],
             'type'            => $pk['type'],
+            'niva'            => $niva,
+            'niva_navn'       => $niva_navn,
             'antall_personer' => $personer,
             'kake_produkt_id' => $kake['produkt'] ?? null,
             'kake_variant_id' => $kake['variant'] ?? null,
@@ -492,7 +564,7 @@ add_filter('amendo_b2b_soknad_svar', function($svar, $bruker_id) {
 
 /** «Fredagskos · 25 personer · fredag · annenhver uke · anslag fra nettsiden ca. 2 400 kr/mnd eks. mva». */
 function amendo_bp_onske_tekst(array $o) {
-    $deler = [(string) ($o['navn'] ?? $o['pakke_id'] ?? '')];
+    $deler = [(string) ($o['navn'] ?? $o['pakke_id'] ?? '') . (!empty($o['niva_navn']) ? ' – ' . $o['niva_navn'] : '')];
     if (!empty($o['antall_personer'])) $deler[] = (int) $o['antall_personer'] . ' personer';
     if (!empty($o['kake_navn'])) $deler[] = (string) $o['kake_navn'];
     if (!empty($o['dag'])) $deler[] = (string) $o['dag'];
@@ -579,9 +651,13 @@ function amendo_bp_produktvalg($name, $valgt, $etikett) {
     echo '</select>';
 }
 
-/** Én linje i oppskriften. `$p` og `$l` er tall, eller «__p__»/«__l__» i malen. */
-function amendo_bp_linje($p, $l, array $linje) {
-    $n = 'bedriftspakker[pakker][' . $p . '][linjer][' . $l . ']';
+/**
+ * Én linje i en oppskrift. `$prefiks` er navnet på lista
+ * («bedriftspakker[pakker][0][linjer]» eller «…[nivaer][1][linjer]»), og `$l`
+ * et tall; i malen «__prefiks__» og «__l__».
+ */
+function amendo_bp_linje($prefiks, $l, array $linje) {
+    $n = $prefiks . '[' . $l . ']';
     ?>
     <div class="bp-linje">
         <div class="bp-linje-produkt"><?php amendo_bp_produktvalg($n . '[produkt]', (int) ($linje['produkt'] ?? 0), 'Produkt'); ?></div>
@@ -602,6 +678,35 @@ function amendo_bp_kake($p, $k, array $kake) {
         <input type="number" name="<?php echo esc_attr($n); ?>[personer]" value="<?php echo esc_attr((string) ($kake['personer'] ?? '')); ?>" min="1" max="1000" placeholder="fra navnet" aria-label="Antall personer kaken rekker til">
         <span>personer</span>
         <button type="button" class="amendo-btn-danger bp-slett-kake">Slett</button>
+    </div>
+    <?php
+}
+
+/** En oppskrift: linjene og knappen. admin.js legger nye linjer i den nærmeste. */
+function amendo_bp_oppskrift($prefiks, array $linjer) {
+    ?>
+    <div class="bp-oppskrift" data-prefiks="<?php echo esc_attr($prefiks); ?>">
+        <div class="bp-linjer">
+            <?php foreach (array_values($linjer) as $l => $linje) amendo_bp_linje($prefiks, $l, $linje); ?>
+        </div>
+        <button type="button" class="amendo-btn-secondary bp-legg-til-linje">+ Legg til linje</button>
+    </div>
+    <?php
+}
+
+/** Ett nivå. `$p` og `$i` er tall, eller «__p__»/«__n__» i malen. */
+function amendo_bp_niva($p, $i, array $nv) {
+    $n = 'bedriftspakker[pakker][' . $p . '][nivaer][' . $i . ']';
+    ?>
+    <div class="bp-niva">
+        <input type="hidden" name="<?php echo esc_attr($n); ?>[nokkel]" value="<?php echo esc_attr($nv['nokkel'] ?? ''); ?>">
+        <div class="amendo-grid-2">
+            <div class="amendo-field"><label>Navn på nivået</label><input type="text" name="<?php echo esc_attr($n); ?>[navn]" value="<?php echo esc_attr($nv['navn'] ?? ''); ?>" placeholder="Medium"></div>
+            <div class="amendo-field"><label>Oppskriften gjelder for</label><input type="number" name="<?php echo esc_attr($n); ?>[per_personer]" value="<?php echo (int) ($nv['per_personer'] ?? 10); ?>" min="1" max="1000" style="width:70px"> personer</div>
+        </div>
+        <div class="amendo-field"><label>Kort tekst</label><textarea name="<?php echo esc_attr($n); ?>[tekst]" rows="2"><?php echo esc_textarea($nv['tekst'] ?? ''); ?></textarea></div>
+        <?php amendo_bp_oppskrift($n . '[linjer]', $nv['linjer'] ?? []); ?>
+        <button type="button" class="amendo-btn-danger bp-slett-niva">Slett nivå</button>
     </div>
     <?php
 }
@@ -636,10 +741,16 @@ function amendo_bp_pakke_kort($i, array $pk) {
             <div class="amendo-field">
                 <label>Oppskrift</label>
                 <p class="field-help">Hva pakken består av for <input type="number" name="<?php echo esc_attr($n); ?>[per_personer]" value="<?php echo (int) ($pk['per_personer'] ?? 10); ?>" min="1" max="1000" style="width:70px" aria-label="Oppskriften gjelder for antall personer"> personer. Nettsiden skalerer til antallet kunden oppgir (rundet opp per linje) og priser med dagens priser i WooCommerce.</p>
-                <div class="bp-linjer">
-                    <?php foreach (array_values($pk['linjer'] ?? []) as $l => $linje) amendo_bp_linje($i, $l, $linje); ?>
+                <?php amendo_bp_oppskrift($n . '[linjer]', $pk['linjer'] ?? []); ?>
+            </div>
+
+            <div class="amendo-field">
+                <label>Nivåer (valgfritt)</label>
+                <p class="field-help">F.eks. Liten, Medium og Stor, hver med egen tekst og oppskrift. Kunden velger ett. Uten nivåer gjelder oppskriften over.</p>
+                <div class="bp-nivaer">
+                    <?php foreach (array_values($pk['nivaer'] ?? []) as $k => $nv) amendo_bp_niva($i, $k, $nv); ?>
                 </div>
-                <button type="button" class="amendo-btn-secondary bp-legg-til-linje">+ Legg til linje</button>
+                <button type="button" class="amendo-btn-secondary bp-legg-til-niva">+ Legg til nivå</button>
             </div>
 
             <div class="amendo-field bp-bare-fast" <?php echo $type === 'fast' ? '' : 'hidden'; ?>>
@@ -689,7 +800,8 @@ add_action('amendo_admin_paneler', function() {
             </div>
             <button type="button" class="amendo-btn-secondary" id="bp-legg-til">+ Legg til pakke</button>
             <template id="bp-pakke-mal"><?php amendo_bp_pakke_kort('__p__', []); ?></template>
-            <template id="bp-linje-mal"><?php amendo_bp_linje('__p__', '__l__', []); ?></template>
+            <template id="bp-linje-mal"><?php amendo_bp_linje('__prefiks__', '__l__', []); ?></template>
+            <template id="bp-niva-mal"><?php amendo_bp_niva('__p__', '__n__', []); ?></template>
             <template id="bp-kake-mal"><?php amendo_bp_kake('__p__', '__l__', []); ?></template>
         </div>
     </div>

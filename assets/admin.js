@@ -479,17 +479,31 @@ $(document).on('click', '.slett-antall-regel', function() {
         if (confirm('Slette pakken? Den forsvinner fra nettsiden når du lagrer.')) $(this).closest('.bp-pakke').remove();
     });
 
-    // Linjer i oppskriften og kaker: samme mønster, hver med sin mal og liste.
-    $.each({ linje: '.bp-linjer', kake: '.bp-kaker' }, function(hva, liste) {
+    // Linjer: i den nærmeste oppskriften — pakkens eller et nivås (1.4.33).
+    // Oppskriften har navnet på lista i data-prefiks.
+    $(document).on('click', '.bp-legg-til-linje', function() {
+        var mal = $('#bp-linje-mal').html(), $oppskrift = $(this).closest('.bp-oppskrift');
+        if (!mal) return;
+        $oppskrift.children('.bp-linjer').append(mal.split('__prefiks__').join(String($oppskrift.data('prefiks'))).split('__l__').join(String(bpNr++)));
+        bpProduktsok();
+    });
+
+    // Kaker og nivåer: én liste per pakke, hver med sin mal.
+    $.each({ kake: ['.bp-kaker', '__l__'], niva: ['.bp-nivaer', '__n__'] }, function(hva, oppsett) {
         $(document).on('click', '.bp-legg-til-' + hva, function() {
             var mal = $('#bp-' + hva + '-mal').html(), $pakke = $(this).closest('.bp-pakke');
             if (!mal) return;
-            $pakke.find(liste).append(mal.split('__p__').join(String($pakke.data('p'))).split('__l__').join(String(bpNr++)));
+            $pakke.find(oppsett[0]).first().append(mal.split('__p__').join(String($pakke.data('p'))).split(oppsett[1]).join(String(bpNr++)));
             bpProduktsok();
         });
-        $(document).on('click', '.bp-slett-' + hva, function() {
-            $(this).closest('.bp-linje').remove();
-        });
+    });
+
+    $(document).on('click', '.bp-slett-linje, .bp-slett-kake', function() {
+        $(this).closest('.bp-linje').remove();
+    });
+
+    $(document).on('click', '.bp-slett-niva', function() {
+        if (confirm('Slette nivået?')) $(this).closest('.bp-niva').remove();
     });
 
     $(document).on('change', '.bp-type', function() {
