@@ -15,8 +15,12 @@
  *   bare én slik oppfølging; den sender alle taggene som har ventet
  *   (option amendo_revalider_ventende).
  *
- * Utløses av lagring i Amendo-admin (alle tagger) og av WP-sider som
- * publiseres, oppdateres, avpubliseres eller slettes (bare «side»).
+ * Utløses av lagring i Amendo-admin (alle tagger) og av WP-sider og -innlegg
+ * som publiseres, oppdateres, avpubliseres eller slettes (bare «side»).
+ *
+ * Innlegg (1.4.35): frontenden viser dem på egen adresse og i «Siste
+ * innlegg»-blokker på sidene, og henter begge med taggen «side». Derfor samme
+ * tagg og ikke en egen — en ny tagg ville frontendene ikke kjent.
  */
 
 if (!defined('ABSPATH')) exit;
@@ -97,15 +101,18 @@ function amendo_frontend_url_rens($url) {
     return untrailingslashit($url);
 }
 
-// ── WP-sider ────────────────────────────────────────────────────────────────
+// ── WP-sider og -innlegg ────────────────────────────────────────────────────
+
+const AMENDO_REVALIDER_POSTTYPER = ['page', 'post'];
 
 /**
- * En side som er, eller har vært, publisert: publisering, oppdatering,
- * avpublisering (til utkast/privat) og papirkurv. Utkast som aldri har vært
- * publisert (draft → draft), autosave og revisjoner utløser ingenting.
+ * En side eller et innlegg som er, eller har vært, publisert: publisering,
+ * oppdatering, avpublisering (til utkast/privat) og papirkurv. Utkast som
+ * aldri har vært publisert (draft → draft), autosave og revisjoner utløser
+ * ingenting. Andre posttyper (produkter, blokker, menyer …) heller ikke.
  */
 add_action('transition_post_status', function($ny, $gammel, $post) {
-    if (!$post instanceof WP_Post || $post->post_type !== 'page') return;
+    if (!$post instanceof WP_Post || !in_array($post->post_type, AMENDO_REVALIDER_POSTTYPER, true)) return;
     if (wp_is_post_autosave($post) || wp_is_post_revision($post)) return;
     if ($ny !== 'publish' && $gammel !== 'publish') return;
     amendo_revalider_side();
@@ -115,7 +122,7 @@ add_action('transition_post_status', function($ny, $gammel, $post) {
 // transition_post_status. En side i papirkurven ble varslet da den ble flyttet dit.
 add_action('before_delete_post', function($post_id, $post = null) {
     $post = $post instanceof WP_Post ? $post : get_post($post_id);
-    if ($post && $post->post_type === 'page' && $post->post_status === 'publish') {
+    if ($post && in_array($post->post_type, AMENDO_REVALIDER_POSTTYPER, true) && $post->post_status === 'publish') {
         amendo_revalider_side();
     }
 }, 10, 2);

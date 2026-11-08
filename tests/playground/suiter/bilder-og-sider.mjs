@@ -44,8 +44,9 @@ sjekk('utkast som aldri er publisert: ingen varsel', r.http?.length === 0 && r.p
 await sak('lag_ekstra');
 r = await sak('revisjon');
 sjekk('revisjon og autosave: ingen varsel', r.http?.length === 0 && r.purge?.length === 0, r);
-r = await sak('innlegg');
-sjekk('innlegg (ikke side): ingen varsel', r.http?.length === 0, r);
+r = await sak('annen_posttype');
+sjekk('annen posttype (gjenbrukbar blokk): ingen varsel', r.http?.length === 0 && r.purge?.length === 0, r);
+// Innlegg varsler fra 1.4.35 — testet i suiten revalidering.
 
 console.log('\nSammenslåing med lagring av innstillinger');
 await sak('klargjor');

@@ -146,10 +146,14 @@ function amendo_test_side_reval(WP_REST_Request $req) {
     }, 10, 3);
     add_action('litespeed_purge', function($t) use (&$purge) { $purge[] = $t; });
 
-    $side = function($status = 'publish', $type = 'page') {
-        return wp_insert_post(['post_type' => $type, 'post_title' => 'T' . wp_rand(), 'post_status' => $status]);
+    // ?type=post: de samme sakene med innlegg (1.4.35, suiten revalidering), med egne ID-er.
+    $posttype = $req->get_param('type') === 'post' ? 'post' : 'page';
+    $side = function($status = 'publish', $type = null) use ($posttype) {
+        return wp_insert_post(['post_type' => $type ?: $posttype, 'post_title' => 'T' . wp_rand(), 'post_status' => $status]);
     };
     $for_test = function() use (&$http, &$purge) { $http = []; $purge = []; };
+    $hent = function($k) use ($posttype) { return get_option($posttype === 'post' ? $k . '_post' : $k); };
+    $sett = function($k, $v) use ($posttype) { update_option($posttype === 'post' ? $k . '_post' : $k, $v); };
 
     switch ($sak) {
         case 'klargjor':
@@ -162,43 +166,43 @@ function amendo_test_side_reval(WP_REST_Request $req) {
             $id = $side('publish');
             wp_clear_scheduled_hook('amendo_revalider_frontend');
             delete_option('amendo_revalider_ventende');
-            update_option('test_side_id', $id);
-            update_option('test_utkast_id', $side('draft'));
+            $sett('test_side_id', $id);
+            $sett('test_utkast_id', $side('draft'));
             return ['ok' => true];
         case 'lag_ekstra':      // egen forespørsel, så varselet fra opprettelsen ikke skjuler det neste
-            update_option('test_ekstra_id', $side('publish'));
+            $sett('test_ekstra_id', $side('publish'));
             wp_clear_scheduled_hook('amendo_revalider_frontend');
             delete_option('amendo_revalider_ventende');
             return ['ok' => true];
         case 'publiser_ny':
             $side('publish'); break;
         case 'oppdater':
-            wp_update_post(['ID' => get_option('test_side_id'), 'post_title' => 'Ny tittel']); break;
+            wp_update_post(['ID' => $hent('test_side_id'), 'post_title' => 'Ny tittel']); break;
         case 'to_oppdateringer':
-            wp_update_post(['ID' => get_option('test_side_id'), 'post_title' => 'A']);
-            wp_update_post(['ID' => get_option('test_side_id'), 'post_title' => 'B']); break;
+            wp_update_post(['ID' => $hent('test_side_id'), 'post_title' => 'A']);
+            wp_update_post(['ID' => $hent('test_side_id'), 'post_title' => 'B']); break;
         case 'oppdater_ekstra':
-            wp_update_post(['ID' => get_option('test_ekstra_id'), 'post_title' => 'Ekstra ' . wp_rand()]); break;
+            wp_update_post(['ID' => $hent('test_ekstra_id'), 'post_title' => 'Ekstra ' . wp_rand()]); break;
         case 'avpubliser':
-            wp_update_post(['ID' => get_option('test_side_id'), 'post_status' => 'draft']); break;
+            wp_update_post(['ID' => $hent('test_side_id'), 'post_status' => 'draft']); break;
         case 'publiser_igjen':
-            wp_update_post(['ID' => get_option('test_side_id'), 'post_status' => 'publish']); break;
+            wp_update_post(['ID' => $hent('test_side_id'), 'post_status' => 'publish']); break;
         case 'papirkurv':
-            wp_trash_post(get_option('test_side_id')); break;
+            wp_trash_post($hent('test_side_id')); break;
         case 'slett_trashed':
-            wp_delete_post(get_option('test_side_id'), true); break;
+            wp_delete_post($hent('test_side_id'), true); break;
         case 'slett_publisert_direkte':
-            wp_delete_post(get_option('test_ekstra_id'), true); break;
+            wp_delete_post($hent('test_ekstra_id'), true); break;
         case 'utkast_aldri_publisert':
-            wp_update_post(['ID' => get_option('test_utkast_id'), 'post_title' => 'Utkast endret']);
+            wp_update_post(['ID' => $hent('test_utkast_id'), 'post_title' => 'Utkast endret']);
             $side('draft'); break;
         case 'revisjon':
             require_once ABSPATH . 'wp-admin/includes/post.php'; // wp_create_post_autosave
-            $id = (int) get_option('test_ekstra_id');
+            $id = (int) $hent('test_ekstra_id');
             _wp_put_post_revision(get_post($id));
-            wp_create_post_autosave(['post_ID' => $id, 'post_title' => 'Autosave', 'post_content' => 'x', 'post_type' => 'page']); break;
-        case 'innlegg':
-            $side('publish', 'post'); break;
+            wp_create_post_autosave(['post_ID' => $id, 'post_title' => 'Autosave', 'post_content' => 'x', 'post_type' => $posttype]); break;
+        case 'annen_posttype':  // gjenbrukbar blokk: verken side eller innlegg
+            $side('publish', 'wp_block'); break;
         case 'ikke_satt_opp':
             delete_option('amendo_frontend_url');
             $side('publish'); break;

@@ -102,8 +102,8 @@ parallelt. Hver suite tar 2–10 minutter (Playground bruker 10–25 s per kall)
 | `sporing-og-secret` | sporingslyttere stille under `/frakt`; kasse-secret i admin |
 | `admin` | «Skjul betalt frakt», tilgang (`manage_woocommerce`) |
 | `admin-js` | `admin.js` i jsdom: secrets, mediebiblioteket |
-| `revalidering` | LiteSpeed-tømming og `/api/revalidate` ved lagring |
-| `bilder-og-sider` | bilde-ID/-mål på forsiden; WP-sider varsler frontenden |
+| `revalidering` | LiteSpeed-tømming og `/api/revalidate` ved lagring; 1.4.35: WP-innlegg varsler som sider (`["side"]`: publisering, lagring, avpublisering, papirkurv, permanent sletting, oppfølgingen; ikke utkast, revisjoner eller andre posttyper), sakene i `mu/v145-test.php` med `type=post` |
+| `bilder-og-sider` | bilde-ID/-mål på forsiden; WP-sider varsler frontenden (andre posttyper enn side/innlegg gjør det ikke) |
 | `forside` | 1.4.13: forsideseksjonene (kategorifliser, historie, lokasjoner, galleri, tall-merke, nyhetsoverskrift, nyhetsbrev) og `seksjoner`: rensing, maks rader, kategorier validert, bildemål, ACF-reserve FELT FOR FELT (mot en ACF-stubb som bare gjelder denne suiten), at en lagring hos en ACF-butikk ikke endrer svaret, og at svaret uten nye felter er som i 1.4.12; admin-fanen og admin.js i jsdom |
 | `kategorirad` | kategoriraden: lagring, `/settings`, admin, jsdom, varsel ved endring |
 | `cargonizer` | `_lcfwc_*` på REST-ordrer, mot stubber |
