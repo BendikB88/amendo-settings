@@ -482,3 +482,9 @@
 .bp-valg label { font-weight: normal; text-transform: none; letter-spacing: 0; display: inline-flex; align-items: center; gap: 4px; }
 #bp-advarsler ul { margin: 6px 0 0 18px; list-style: disc; }
 .bp-niva { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin-bottom: 10px; background: #f9fafb; }
+
+/* Sesongseksjoner (1.4.34) */
+.sesong-rad [hidden] { display: none !important; }
+.sesong-status { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #f3f4f6; color: #374151; margin-left: auto; margin-right: 8px; }
+.sesong-status-aktiv { background: #dcfce7; color: #166534; }
+.sesong-status-aldri { background: #fef3c7; color: #92400e; }

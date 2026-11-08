@@ -448,6 +448,29 @@ $(document).on('click', '.slett-antall-regel', function() {
         $(this).remove();
     });
 
+    // ── Sesongseksjoner (includes/sesong.php) ──
+    // Nye rader fra malen, med et nummer ingen andre har (PHP leser lista i
+    // rekkefølgen i skjemaet, så numrene trenger ikke være sammenhengende).
+    var sesongNr = $('#sesong-liste [name]').length + 1;
+    $('#sesong-legg-til').on('click', function() {
+        var mal = $('#sesong-mal').html();
+        if (!mal) return;
+        var $rad = $(mal.split('__i__').join(String(sesongNr++)));
+        $('#sesong-liste').append($rad);
+        kategoriVelgere($rad);
+    });
+    $(document).on('click', '.sesong-slett', function() {
+        if (confirm('Slette seksjonen? Den forsvinner fra forsiden når du lagrer.')) $(this).closest('.sesong-rad').remove();
+    });
+    $(document).on('change', '.sesong-kilde', function() {
+        var $rad = $(this).closest('.sesong-rad'), kilde = $(this).val();
+        $rad.find('.sesong-bare-kategori').prop('hidden', kilde !== 'kategori');
+        $rad.find('.sesong-bare-etikett').prop('hidden', kilde !== 'etikett');
+    });
+    $(document).on('input', '.sesong-rad input[name$="[overskrift]"]', function() {
+        $(this).closest('.sesong-rad').find('.sesong-tittel').text($(this).val() || 'Ny seksjon');
+    });
+
     // ── Bedriftspakker (bare når modulen er på — se includes/moduler/bedriftspakker.php) ──
     // Nye pakker og linjer lages fra <template>-ene PHP har rendret. Numrene i
     // `name` trenger ikke være sammenhengende (PHP leser listene i rekkefølgen
