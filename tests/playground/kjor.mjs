@@ -9,7 +9,7 @@
 // Logger: logg/<suite>.txt (suitens utdata) og logg/<suite>.server.txt.
 import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { createWriteStream, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { freemem, totalmem } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -19,12 +19,17 @@ const HER = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HER, '../..');
 const PORT = Number(process.env.PG_PORT || 9411);
 const LOGG = join(HER, 'logg');
+// Plugins som ikke kan ligge i repoet (lisens), f.eks. WCPA Pro til suiten
+// tilvalg: én mappe per plugin i eksterne/ (ignorert av git), montert under
+// wp-content/plugins. De er inaktive til en suite aktiverer dem.
+const EKSTERNE = join(HER, 'eksterne');
+const eksterne = existsSync(EKSTERNE) ? readdirSync(EKSTERNE, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name) : [];
 mkdirSync(LOGG, { recursive: true });
 
 // Raskeste og mest grunnleggende først; hovedsuitens deler før de nyere.
 const REKKEFOLGE = [
   'frakt-beregning', 'frakt-validering', 'kupong', 'rate-limit', 'sporing-og-secret', 'admin',
-  'admin-js', 'revalidering', 'bilder-og-sider', 'forside', 'kategorirad', 'cargonizer', 'betaling', 'kortbetaling', 'moduler', 'tellix', 'tellix-kunder', 'henting', 'lagring', 'kategorivelger', 'kundegrupper', 'helsebygget', 'leveringsregler', 'mal', 'wolt-gavekort', 'instagram', 'faktura', 'flytting', 'soknad', 'bedriftskunder', 'wolt-status', 'bedriftspakker', 'meta-oppslag', 'sesong-kontakt',
+  'admin-js', 'revalidering', 'bilder-og-sider', 'forside', 'kategorirad', 'cargonizer', 'betaling', 'kortbetaling', 'moduler', 'tellix', 'tellix-kunder', 'henting', 'lagring', 'kategorivelger', 'kundegrupper', 'helsebygget', 'leveringsregler', 'mal', 'wolt-gavekort', 'instagram', 'faktura', 'flytting', 'soknad', 'bedriftskunder', 'wolt-status', 'bedriftspakker', 'meta-oppslag', 'sesong-kontakt', 'tilvalg',
 ];
 const finnes = readdirSync(join(HER, 'suiter')).filter(f => f.endsWith('.mjs')).map(f => f.slice(0, -4));
 const ukjente = finnes.filter(s => !REKKEFOLGE.includes(s));
@@ -59,6 +64,7 @@ async function startServer(suite) {
   const server = spawn(process.execPath, [cliBin, 'server', `--port=${PORT}`,
     '--mount-dir', REPO, '/wordpress/wp-content/plugins/amendo-settings',
     '--mount-dir', join(HER, 'mu'), '/wordpress/wp-content/mu-plugins',
+    ...eksterne.flatMap(d => ['--mount-dir', join(EKSTERNE, d), `/wordpress/wp-content/plugins/${d}`]),
     `--blueprint=${join(HER, 'blueprint.json')}`,
   ], { cwd: HER, detached: process.platform !== 'win32' });
   server.stdout.pipe(logg); server.stderr.pipe(logg);
