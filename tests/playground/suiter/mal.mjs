@@ -39,7 +39,7 @@ sjekk('moduler_kjente: alle nøklene, i rekkefølgen fra amendo_moduler_alle()',
 sjekk('butikk.logo_mork: tom, og de gamle butikkfeltene står', s.butikk?.logo_mork === '' && 'logo' in s.butikk && 'navn' in s.butikk && 'organisasjonsnummer' in s.butikk, s.butikk);
 sjekk('design.tema: tom, fargene står', s.design?.tema === '' && 'primærfarge' in s.design, s.design);
 sjekk('levering: { produkt_id: null, pris: null }', JSON.stringify(s.levering) === '{"produkt_id":null,"pris":null}', s.levering);
-sjekk('henting.gamle_felter: []', JSON.stringify(s.henting) === '{"gamle_felter":[]}', s.henting);
+sjekk('henting.gamle_felter: [] (og 1.4.39: stengte_ukedager/stengte_datoer tomme)', JSON.stringify(s.henting) === '{"gamle_felter":[],"stengte_ukedager":[],"stengte_datoer":[]}', s.henting);
 sjekk('min_side.lenker: []', JSON.stringify(s.min_side) === '{"lenker":[]}', s.min_side);
 sjekk('sporing: tre tomme ID-er', JSON.stringify(s.sporing) === '{"gtm":"","klaviyo":"","facebook":""}', s.sporing);
 sjekk('ingen helsebygget-felt når modulen er av', !('helsebygget' in s));

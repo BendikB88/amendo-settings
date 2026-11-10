@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.38
+ * Version: 1.4.39
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.38');
+define('AMENDO_SETTINGS_VERSION', '1.4.39');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -23,6 +23,7 @@ require_once AMENDO_SETTINGS_PATH . 'includes/bedrift.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/ubetalte.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/kortbetaling.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/stengte.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/henting-stengt.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/lagring.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/kategorivelger.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/leveringsregler.php';
@@ -397,6 +398,9 @@ function amendo_get_leveringsregler() {
             'maks_per_tidsluke'  => $global_maks,
             'ikke_dager'         => $ikke_dager,
             'stengte_perioder'   => $stengte,
+            // 1.4.39 — se includes/henting-stengt.php. Alltid med, tomme som standard.
+            'stengte_ukedager'   => amendo_henting_stengte_ukedager(),
+            'stengte_datoer'     => amendo_henting_stengte_datoer(),
             // 1.4.18 — se includes/leveringsregler.php.
             'stengt_helligdager' => amendo_stengt_helligdager(),
             'helligdager'        => amendo_helligdager_rest(),
@@ -860,6 +864,7 @@ function amendo_settings_page() {
                         </div>
                         <p class="field-help">Typisk lørdag og søndag</p>
                     </div>
+                    <?php amendo_henting_stengt_felt(); // 1.4.39 — se includes/henting-stengt.php ?>
                     <input type="hidden" name="stengt_helligdager_finnes" value="1">
                     <?php amendo_helligdager_felt(); ?>
                     <?php amendo_mal_henting_felt(); // 1.4.23 ?>
