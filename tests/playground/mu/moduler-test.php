@@ -32,19 +32,40 @@ add_action('rest_api_init', function() {
         return ['ok' => true];
     });
 
+    /**
+     * Har kroken en callback fra en modulfil (includes/moduler/)? Kjernen
+     * bruker de samme krokene fra 1.4.34 (sesong.php: fane, panel, lagring og
+     * /settings; kontakt.php: lagring), så has_action() alene sier ikke lenger
+     * om en MODUL har registrert seg.
+     */
+    $fra_modul = function($krok) {
+        global $wp_filter;
+        if (empty($wp_filter[$krok])) return false;
+        foreach ($wp_filter[$krok]->callbacks as $cbs) {
+            foreach ($cbs as $cb) {
+                $f = $cb['function'];
+                try {
+                    $ref = is_array($f) ? new ReflectionMethod($f[0], $f[1]) : (is_string($f) && strpos($f, '::') !== false ? new ReflectionMethod($f) : new ReflectionFunction($f));
+                } catch (ReflectionException $e) { continue; }
+                if (strpos(str_replace('\\', '/', (string) $ref->getFileName()), '/includes/moduler/') !== false) return true;
+            }
+        }
+        return false;
+    };
+
     /** Hva som er registrert i DENNE forespørselen. */
-    $r('/moduler-inspiser', function() {
+    $r('/moduler-inspiser', function() use ($fra_modul) {
         wp_set_current_user(get_user_by('login', 'admin')->ID);
         ob_start(); amendo_settings_page(); $html = ob_get_clean();
         $settings = rest_do_request(new WP_REST_Request('GET', '/amendo-settings/v1/settings'))->get_data();
         return [
             'aktive'             => amendo_moduler_aktive(),
             'b2b_lastet'         => function_exists('amendo_b2b_behandle'),
-            'krok_faner'         => (bool) has_action('amendo_admin_faner'),
-            'krok_paneler'       => (bool) has_action('amendo_admin_paneler'),
-            'krok_etter_skjema'  => (bool) has_action('amendo_admin_etter_skjema'),
-            'krok_lagre'         => (bool) has_action('amendo_lagre_innstillinger'),
-            'krok_settings'      => (bool) has_filter('amendo_settings_svar'),
+            'krok_faner'         => $fra_modul('amendo_admin_faner'),
+            'krok_paneler'       => $fra_modul('amendo_admin_paneler'),
+            'krok_etter_skjema'  => $fra_modul('amendo_admin_etter_skjema'),
+            'krok_lagre'         => $fra_modul('amendo_lagre_innstillinger'),
+            'krok_settings'      => $fra_modul('amendo_settings_svar'),
             'krok_admin_post'    => (bool) has_action('admin_post_amendo_b2b_soknad'),
             'html_fane_b2b'      => strpos($html, 'data-tab="b2b"') !== false,
             'html_panel_b2b'     => strpos($html, 'id="tab-b2b"') !== false,

@@ -77,6 +77,13 @@
  * fram). Vises i Søknader (kolonnen Pakke) og på brukerprofilen. Er modulen
  * av, ignoreres feltene, og svaret er som før.
  *
+ * ── E-post og oppfølging (1.4.37) ─────────────────────────────────────────
+ * En søknad med pakker gir butikken en e-post (se amendo_bp_varsle()), og
+ * hver bedrift har en oppfølgingsstatus (Ny, Kontaktet, Avtale startet, Ikke
+ * aktuell) med notat og dato i Søknader, i kortet «Oppfølging av
+ * bedriftspakker» (med filter på status og kolonnen Ref) og på
+ * brukerprofilen. Ingenting av dette er i REST-svarene.
+ *
  * ── tellix_id ─────────────────────────────────────────────────────────────
  * Amendo-gatewayen sender varelinjer til Tellix med produktets `tellix_id`
  * (variantens egen for varianter). Fra 1.36.14 har den et reserveprodukt når
@@ -577,41 +584,348 @@ function amendo_bp_onske_tekst(array $o) {
     return implode(' · ', $deler);
 }
 
-/** Pakkene og selgerkoden på brukeren, som HTML-linjer. Tom streng når ingenting er lagret. */
-function amendo_bp_bruker_html($bruker_id) {
+/** Pakkene (og selgerkoden) på brukeren, som HTML-linjer. Tom streng når ingenting er lagret. */
+function amendo_bp_bruker_html($bruker_id, $med_ref = true) {
     $onsker = get_user_meta($bruker_id, '_amendo_bp_onske', true);
     $ref = (string) get_user_meta($bruker_id, '_amendo_bp_ref', true);
     $linjer = [];
     foreach (is_array($onsker) ? $onsker : [] as $o) {
         if (is_array($o)) $linjer[] = '<span class="bp-onske">' . esc_html(amendo_bp_onske_tekst($o)) . '</span>';
     }
-    if ($ref !== '') $linjer[] = '<span class="bp-ref">Selgerkode: ' . esc_html($ref) . '</span>';
+    if ($med_ref && $ref !== '') $linjer[] = '<span class="bp-ref">Selgerkode: ' . esc_html($ref) . '</span>';
     return implode('<br>', $linjer);
 }
 
-// Kolonnen Pakke i Søknader (includes/moduler/b2b.php).
-add_action('amendo_b2b_soknad_celle', function($u) {
-    echo amendo_bp_bruker_html($u->ID) ?: '—'; // escapet i amendo_bp_bruker_html
+// ── E-post til butikken (1.4.37) ────────────────────────────────────────────
+//
+// Når en søknad har pakker, får butikken en e-post (ren tekst) med firma,
+// org.nr., kontakt, telefon, e-post, pakkene (nivå, personer, kake, dag,
+// hyppighet, anslag), selgerkoden og lenker til søknaden og brukeren i admin.
+// Mottakere som kontaktskjemaet: «Kontaktskjema sendes til», ellers
+// kontakt-e-posten, ellers admin-e-posten (amendo_kontakt_mottakere()).
+// Reply-To er kunden.
+//
+// Samme innhold (pakker, selgerkode, org.nr., status) to ganger innen et døgn
+// sendes ikke på nytt: frontenden kan prøve igjen. Feiler wp_mail, står
+// søknaden som før, og neste innsending prøver igjen. Ingenting logges.
+
+/** «911 222 333». */
+function amendo_bp_orgnr_tekst($orgnr) {
+    return strlen($orgnr) === 9 ? substr($orgnr, 0, 3) . ' ' . substr($orgnr, 3, 3) . ' ' . substr($orgnr, 6) : $orgnr;
+}
+
+/** Kontaktpersonen: navnet på kontoen, ellers fakturanavnet, ellers visningsnavnet. */
+function amendo_bp_kontakt_navn(WP_User $u) {
+    $navn = trim($u->first_name . ' ' . $u->last_name);
+    if ($navn === '') $navn = trim(get_user_meta($u->ID, 'billing_first_name', true) . ' ' . get_user_meta($u->ID, 'billing_last_name', true));
+    return $navn !== '' ? $navn : (string) $u->display_name;
+}
+
+function amendo_bp_varsle($bruker_id, array $onsker) {
+    $u = get_userdata($bruker_id);
+    if (!$u || !$onsker) return false;
+    wp_cache_delete($bruker_id, 'user_meta');
+    $status = (string) get_user_meta($bruker_id, '_b2b_status', true);
+    $orgnr  = amendo_b2b_orgnr(get_user_meta($bruker_id, '_orgnr_soknad', true) ?: get_user_meta($bruker_id, 'billing_org_number', true));
+    $ref    = (string) get_user_meta($bruker_id, '_amendo_bp_ref', true);
+
+    $hash = md5(wp_json_encode([$onsker, $ref, $orgnr, $status]));
+    $sist = get_user_meta($bruker_id, '_amendo_bp_varslet', true);
+    if (is_array($sist) && ($sist['hash'] ?? '') === $hash && time() - (int) ($sist['tid'] ?? 0) < DAY_IN_SECONDS) return false;
+
+    $til = amendo_kontakt_mottakere();
+    if (!$til) return false;
+
+    $firma = amendo_kontakt_linje(get_user_meta($bruker_id, 'billing_company', true), 150);
+    $telefon = amendo_kontakt_linje(get_user_meta($bruker_id, 'billing_phone', true), 40);
+    $epost = (string) $u->user_email;
+    $kr = function($v) { return number_format((float) $v, 0, ',', ' ') . ' kr'; };
+
+    $linjer = [
+        'Firma: ' . ($firma !== '' ? $firma : '—'),
+        'Org.nr.: ' . ($orgnr !== '' ? amendo_bp_orgnr_tekst($orgnr) : '—'),
+        'Kontakt: ' . amendo_kontakt_linje(amendo_bp_kontakt_navn($u), 150),
+        'Telefon: ' . ($telefon !== '' ? $telefon : '—'),
+        'E-post: ' . $epost,
+        'Selgerkode (ref): ' . ($ref !== '' ? $ref : '—'),
+        'Søknaden: ' . ($status === 'godkjent' ? 'godkjent automatisk (bedriften finnes i Tellix)' : ($status === 'venter' ? 'venter på godkjenning' : ($status !== '' ? $status : '—'))),
+        '',
+        count($onsker) === 1 ? 'Pakke:' : 'Pakker:',
+    ];
+    foreach ($onsker as $o) {
+        if (!is_array($o)) continue;
+        $linjer[] = '';
+        $linjer[] = '- ' . (string) ($o['navn'] ?? $o['pakke_id'] ?? '') . (!empty($o['niva_navn']) ? ' – ' . $o['niva_navn'] : '');
+        if (!empty($o['niva_navn'])) $linjer[] = '  Nivå: ' . $o['niva_navn'];
+        if (!empty($o['antall_personer'])) $linjer[] = '  Antall personer: ' . (int) $o['antall_personer'];
+        if (!empty($o['kake_navn'])) $linjer[] = '  Kake: ' . $o['kake_navn'];
+        if (!empty($o['dag'])) $linjer[] = '  Dag: ' . $o['dag'];
+        if (!empty($o['hyppighet'])) $linjer[] = '  Hyppighet: ' . mb_strtolower(AMENDO_BP_HYPPIGHETER[$o['hyppighet']][0] ?? $o['hyppighet']);
+        $n = is_array($o['nettsiden'] ?? null) ? $o['nettsiden'] : [];
+        if (isset($n['anslag_eks_per_maned'])) $linjer[] = '  Anslag: ca. ' . $kr($n['anslag_eks_per_maned']) . '/mnd eks. mva';
+        if (isset($n['pris_eks_per_levering'])) $linjer[] = '  Anslag per levering: ca. ' . $kr($n['pris_eks_per_levering']) . ' eks. mva';
+        if (isset($n['fra_eks_per_person'])) $linjer[] = '  Fra ' . $kr($n['fra_eks_per_person']) . ' per person eks. mva';
+    }
+    $linjer[] = '';
+    $linjer[] = 'Anslagene er regnet på nettsiden og er ikke avtalte priser.';
+    $linjer[] = '';
+    if ($status === 'venter') $linjer[] = 'Søknaden i admin: ' . admin_url('admin.php?page=amendo-settings#b2b');
+    $linjer[] = 'Brukeren i admin: ' . admin_url('user-edit.php?user_id=' . (int) $bruker_id);
+
+    $emne = 'Bedriftspakke: søknad fra ' . ($firma !== '' ? $firma : ($orgnr !== '' ? 'org.nr. ' . amendo_bp_orgnr_tekst($orgnr) : $epost));
+    $hoder = ['Content-Type: text/plain; charset=UTF-8'];
+    if (is_email($epost)) $hoder[] = 'Reply-To: ' . str_replace(['<', '>', '"', "\r", "\n"], '', amendo_bp_kontakt_navn($u)) . ' <' . $epost . '>';
+
+    if (!wp_mail($til, $emne, implode("\n", $linjer) . "\n", $hoder)) return false;
+    update_user_meta($bruker_id, '_amendo_bp_varslet', ['hash' => $hash, 'tid' => time()]);
+    return true;
+}
+
+// Etter at søknaden er lagret (også når den ble godkjent automatisk). Bare
+// når DETTE kallet hadde pakker — et kall med bare selgerkode sender ingenting.
+add_action('amendo_b2b_soknad_lagret', function($bruker_id, $tillegg) {
+    if (is_array($tillegg) && !empty($tillegg['bp_onske'])) amendo_bp_varsle((int) $bruker_id, $tillegg['bp_onske']);
+}, 20, 2);
+
+// ── Oppfølging (1.4.37) ─────────────────────────────────────────────────────
+//
+// Per bedrift (brukeren som søkte): status, notat og en dato butikken velger
+// (f.eks. når de tok kontakt eller avtalen starter), lagret som
+//
+//     _amendo_bp_oppfolging  { status, notat, dato ('Y-m-d' eller ''), endret (ISO), endret_av }
+//
+// Uten lagret oppfølging er statusen «Ny». Endres i Søknader (kolonnen
+// Oppfølging), i kortet «Oppfølging av bedriftspakker» under — alle som har
+// søkt med pakke eller selgerkode, også de som er godkjent, filtrert på
+// status — og på brukerprofilen. Vises aldri for kunden og aldri i REST.
+
+const AMENDO_BP_OPPFOLGING = [
+    'ny'           => 'Ny',
+    'kontaktet'    => 'Kontaktet',
+    'avtale'       => 'Avtale startet',
+    'ikke_aktuell' => 'Ikke aktuell',
+];
+const AMENDO_BP_MAKS_NOTAT = 2000;
+const AMENDO_BP_MAKS_OPPFOLGING = 300;
+
+function amendo_bp_oppfolging($bruker_id) {
+    $o = get_user_meta($bruker_id, '_amendo_bp_oppfolging', true);
+    $o = is_array($o) ? $o : [];
+    $status = (string) ($o['status'] ?? '');
+    return [
+        'status'    => isset(AMENDO_BP_OPPFOLGING[$status]) ? $status : 'ny',
+        'notat'     => (string) ($o['notat'] ?? ''),
+        'dato'      => (string) ($o['dato'] ?? ''),
+        'endret'    => (string) ($o['endret'] ?? ''),
+        'endret_av' => (int) ($o['endret_av'] ?? 0),
+    ];
+}
+
+/** Har søkt med pakke eller selgerkode (eller har oppfølging fra før). */
+function amendo_bp_har_soknad($bruker_id) {
+    return (string) get_user_meta($bruker_id, '_amendo_bp_tid', true) !== '' || is_array(get_user_meta($bruker_id, '_amendo_bp_oppfolging', true));
+}
+
+/** Lagrer fra skjemaet. Returnerer 'lagret', 'uendret' eller 'ugyldig' (ingenting lagret). */
+function amendo_bp_sett_oppfolging($bruker_id, $inn) {
+    if (!is_array($inn)) return 'ugyldig';
+    $status = is_scalar($inn['status'] ?? null) ? (string) $inn['status'] : '';
+    if (!isset(AMENDO_BP_OPPFOLGING[$status])) return 'ugyldig';
+    $dato = is_scalar($inn['dato'] ?? null) ? trim((string) $inn['dato']) : '';
+    if ($dato !== '') {
+        $d = DateTimeImmutable::createFromFormat('!Y-m-d', $dato);
+        if (!$d || $d->format('Y-m-d') !== $dato) return 'ugyldig';
+    }
+    $notat = is_scalar($inn['notat'] ?? null) ? mb_substr(trim(sanitize_textarea_field((string) $inn['notat'])), 0, AMENDO_BP_MAKS_NOTAT) : '';
+    $gammel = amendo_bp_oppfolging($bruker_id);
+    if (is_array(get_user_meta($bruker_id, '_amendo_bp_oppfolging', true)) && $gammel['status'] === $status && $gammel['dato'] === $dato && $gammel['notat'] === $notat) return 'uendret';
+    // wp_slash: update_user_meta() fjerner én backslash, og notatet er fri tekst.
+    update_user_meta($bruker_id, '_amendo_bp_oppfolging', wp_slash([
+        'status' => $status, 'notat' => $notat, 'dato' => $dato, 'endret' => gmdate('c'), 'endret_av' => get_current_user_id(),
+    ]));
+    return 'lagret';
+}
+
+/** Feltene for én bedrift. `$navn` er prefikset, `$form` skjemaet feltene hører til ('' = det rundt). */
+function amendo_bp_oppfolging_felt($bruker_id, $navn, $form = '') {
+    $o = amendo_bp_oppfolging($bruker_id);
+    $f = $form !== '' ? ' form="' . esc_attr($form) . '"' : '';
+    ?>
+    <span class="bp-oppfolging" data-status="<?php echo esc_attr($o['status']); ?>">
+        <select name="<?php echo esc_attr($navn . '[status]'); ?>"<?php echo $f; ?> aria-label="Oppfølgingsstatus">
+            <?php foreach (AMENDO_BP_OPPFOLGING as $k => $etikett): ?><option value="<?php echo esc_attr($k); ?>"<?php selected($o['status'], $k); ?>><?php echo esc_html($etikett); ?></option><?php endforeach; ?>
+        </select>
+        <input type="date" name="<?php echo esc_attr($navn . '[dato]'); ?>"<?php echo $f; ?> value="<?php echo esc_attr($o['dato']); ?>" aria-label="Dato (f.eks. når dere tok kontakt eller avtalen starter)">
+        <textarea name="<?php echo esc_attr($navn . '[notat]'); ?>"<?php echo $f; ?> rows="2" maxlength="<?php echo AMENDO_BP_MAKS_NOTAT; ?>" placeholder="Notat" aria-label="Notat"><?php echo esc_textarea($o['notat']); ?></textarea>
+        <?php if ($o['endret'] && ($t = strtotime($o['endret']))): $av = $o['endret_av'] ? get_userdata($o['endret_av']) : null; ?>
+            <span class="field-help bp-endret">Endret <?php echo esc_html(wp_date('d.m.Y H:i', $t) . ($av ? ' av ' . $av->display_name : '')); ?></span>
+        <?php endif; ?>
+    </span>
+    <?php
+}
+
+function amendo_bp_status_tekst($b2b_status) {
+    return ['venter' => 'Venter', 'godkjent' => 'Godkjent', 'avvist' => 'Avvist'][$b2b_status] ?? '—';
+}
+
+// Kolonnene i Søknader (includes/moduler/b2b.php).
+add_filter('amendo_b2b_soknad_kolonner', function($k) {
+    return $k + ['pakke' => 'Pakke', 'ref' => 'Ref', 'oppfolging' => 'Oppfølging'];
+});
+add_action('amendo_b2b_soknad_celle', function($u, $nokkel = 'pakke') {
+    if ($nokkel === 'pakke') {
+        echo amendo_bp_bruker_html($u->ID, false) ?: '—'; // escapet i amendo_bp_bruker_html
+    } elseif ($nokkel === 'ref') {
+        echo esc_html((string) get_user_meta($u->ID, '_amendo_bp_ref', true) ?: '—');
+    } elseif ($nokkel === 'oppfolging') {
+        if (!amendo_bp_har_soknad($u->ID)) { echo '—'; return; }
+        amendo_bp_oppfolging_felt($u->ID, 'bp_oppf[s][' . (int) $u->ID . ']', 'amendo-bp-oppfolging');
+        echo '<button type="submit" form="amendo-bp-oppfolging" name="lagre" value="s:' . (int) $u->ID . '" class="amendo-btn-secondary bp-lagre-oppfolging">Lagre</button>';
+    }
+}, 10, 2);
+
+add_action('amendo_b2b_skjemaer', function() {
+    ?>
+    <form id="amendo-bp-oppfolging" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+        <?php wp_nonce_field('amendo_bp_oppfolging'); ?>
+        <input type="hidden" name="action" value="amendo_bp_oppfolging">
+        <input type="hidden" name="bp_status" value="<?php echo esc_attr(amendo_bp_filter()); ?>">
+    </form>
+    <?php
 });
 
-// Brukerprofilen. Bare for dem som kan bruke Amendo-admin; ingenting å redigere.
+/** Statusfilteret fra adressen ('' = alle). */
+function amendo_bp_filter() {
+    $f = is_scalar($_GET['bp_status'] ?? null) ? (string) $_GET['bp_status'] : '';
+    return isset(AMENDO_BP_OPPFOLGING[$f]) ? $f : '';
+}
+
+// «Lagre» på én rad: `lagre` = «s:<id>» (Søknader) eller «o:<id>» (oppfølgingskortet).
+// En søknad som venter, står i begge tabellene; feltene har derfor hvert sitt
+// prefiks (bp_oppf[s] / bp_oppf[o]), så den ene ikke overskriver den andre.
+add_action('admin_post_amendo_bp_oppfolging', function() {
+    if (!current_user_can(amendo_settings_kapabilitet())) wp_die('Ingen tilgang', 403);
+    check_admin_referer('amendo_bp_oppfolging');
+    $v = is_scalar($_POST['lagre'] ?? null) ? (string) $_POST['lagre'] : '';
+    $svar = 'ukjent';
+    if (preg_match('/^([so]):(\d+)$/', $v, $m) && get_userdata((int) $m[2]) && amendo_bp_har_soknad((int) $m[2])) {
+        $inn = wp_unslash($_POST['bp_oppf'][$m[1]][$m[2]] ?? null);
+        $svar = amendo_bp_sett_oppfolging((int) $m[2], $inn);
+    }
+    $filter = is_scalar($_POST['bp_status'] ?? null) && isset(AMENDO_BP_OPPFOLGING[(string) $_POST['bp_status']]) ? '&bp_status=' . $_POST['bp_status'] : '';
+    wp_redirect(admin_url('admin.php?page=amendo-settings&bp_oppf=' . $svar . $filter . '#b2b'));
+    exit;
+});
+
+/** Alle som har søkt med pakke eller selgerkode, nyeste først. */
+function amendo_bp_soknader() {
+    $q = new WP_User_Query([
+        'meta_query' => ['relation' => 'OR', ['key' => '_amendo_bp_tid', 'compare' => 'EXISTS'], ['key' => '_amendo_bp_oppfolging', 'compare' => 'EXISTS']],
+        'orderby'    => 'registered',
+        'order'      => 'DESC',
+        'number'     => AMENDO_BP_MAKS_OPPFOLGING,
+        'count_total' => true,
+    ]);
+    $brukere = $q->get_results();
+    // Siste innsending først (brukere uten tid sist, etter registrering).
+    usort($brukere, function($a, $b) {
+        return strcmp((string) get_user_meta($b->ID, '_amendo_bp_tid', true), (string) get_user_meta($a->ID, '_amendo_bp_tid', true));
+    });
+    return ['brukere' => $brukere, 'totalt' => (int) $q->get_total()];
+}
+
+add_action('amendo_b2b_etter_soknader', function() {
+    $alle = amendo_bp_soknader();
+    $filter = amendo_bp_filter();
+    $antall = array_fill_keys(array_keys(AMENDO_BP_OPPFOLGING), 0);
+    $rader = [];
+    foreach ($alle['brukere'] as $u) {
+        $st = amendo_bp_oppfolging($u->ID)['status'];
+        $antall[$st]++;
+        if ($filter === '' || $filter === $st) $rader[] = $u;
+    }
+    $melding = [
+        'lagret'  => ['ok', 'Oppfølgingen er lagret.'],
+        'uendret' => ['ok', 'Ingen endring i oppfølgingen.'],
+        'ugyldig' => ['feil', 'Oppfølgingen ble ikke lagret: ugyldig status eller dato.'],
+        'ukjent'  => ['feil', 'Fant ikke bedriften.'],
+    ][(string) ($_GET['bp_oppf'] ?? '')] ?? null;
+    $lenke = function($f) { return add_query_arg(array_filter(['page' => 'amendo-settings', 'bp_status' => $f]), admin_url('admin.php')) . '#b2b'; };
+    ?>
+    <div class="amendo-card" id="bp-oppfolging">
+        <h2>Oppfølging av bedriftspakker (<?php echo (int) $alle['totalt']; ?>)</h2>
+        <p class="amendo-desc">Alle som har søkt med en pakke eller selgerkode, også de som er godkjent. Ref er selgerkoden fra lenken callsenteret sendte. Butikken får en e-post når en søknad med pakke kommer inn.</p>
+        <?php if ($melding): ?>
+            <div class="amendo-b2b-melding amendo-b2b-melding-<?php echo esc_attr($melding[0]); ?>" id="bp-oppfolging-melding"><?php echo esc_html($melding[1]); ?></div>
+        <?php endif; ?>
+        <p class="bp-filter">Status:
+            <a href="<?php echo esc_url($lenke('')); ?>" class="bp-filter-valg<?php echo $filter === '' ? ' current' : ''; ?>" data-status="">Alle (<?php echo array_sum($antall); ?>)</a>
+            <?php foreach (AMENDO_BP_OPPFOLGING as $k => $etikett): ?>
+                · <a href="<?php echo esc_url($lenke($k)); ?>" class="bp-filter-valg<?php echo $filter === $k ? ' current' : ''; ?>" data-status="<?php echo esc_attr($k); ?>"><?php echo esc_html($etikett); ?> (<?php echo (int) $antall[$k]; ?>)</a>
+            <?php endforeach; ?>
+        </p>
+        <?php if ($alle['totalt'] > count($alle['brukere'])): ?><p class="field-help">Viser de <?php echo count($alle['brukere']); ?> nyeste.</p><?php endif; ?>
+        <?php if (!$rader): ?>
+            <p class="field-help"><?php echo $filter !== '' ? 'Ingen med denne statusen.' : 'Ingen har søkt med pakke ennå.'; ?></p>
+        <?php else: ?>
+        <table class="amendo-tabell">
+            <thead><tr><th>Sendt</th><th>Firma</th><th>Org.nr</th><th>Kontaktperson</th><th>Pakke</th><th>Ref</th><th>Søknad</th><th>Oppfølging</th><th></th></tr></thead>
+            <tbody>
+            <?php foreach ($rader as $u):
+                $tid = strtotime((string) get_user_meta($u->ID, '_amendo_bp_tid', true));
+                $orgnr = amendo_b2b_orgnr(get_user_meta($u->ID, 'billing_org_number', true) ?: get_user_meta($u->ID, '_orgnr_soknad', true));
+                $telefon = (string) get_user_meta($u->ID, 'billing_phone', true);
+            ?>
+            <tr class="bp-oppfolging-rad" data-bruker="<?php echo (int) $u->ID; ?>">
+                <td><?php echo esc_html($tid ? wp_date('d.m.Y H:i', $tid) : '—'); ?></td>
+                <td><?php echo esc_html(get_user_meta($u->ID, 'billing_company', true) ?: '—'); ?></td>
+                <td><?php echo esc_html($orgnr !== '' ? amendo_bp_orgnr_tekst($orgnr) : '—'); ?></td>
+                <td><a href="<?php echo esc_url(get_edit_user_link($u->ID)); ?>"><?php echo esc_html(amendo_bp_kontakt_navn($u)); ?></a><br><span class="field-help"><?php echo esc_html($u->user_email . ($telefon !== '' ? ' · ' . $telefon : '')); ?></span></td>
+                <td class="b2b-pakke"><?php echo amendo_bp_bruker_html($u->ID, false) ?: '—'; // escapet ?></td>
+                <td class="b2b-ref"><?php echo esc_html((string) get_user_meta($u->ID, '_amendo_bp_ref', true) ?: '—'); ?></td>
+                <td class="bp-b2b-status"><?php echo esc_html(amendo_bp_status_tekst((string) get_user_meta($u->ID, '_b2b_status', true))); ?></td>
+                <td><?php amendo_bp_oppfolging_felt($u->ID, 'bp_oppf[o][' . (int) $u->ID . ']', 'amendo-bp-oppfolging'); ?></td>
+                <td><button type="submit" form="amendo-bp-oppfolging" name="lagre" value="o:<?php echo (int) $u->ID; ?>" class="amendo-btn-secondary bp-lagre-oppfolging">Lagre</button></td>
+            </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php endif; ?>
+    </div>
+    <?php
+});
+
+// Brukerprofilen. Bare for dem som kan bruke Amendo-admin, aldri for kunden selv.
 add_action('show_user_profile', 'amendo_bp_profil');
 add_action('edit_user_profile', 'amendo_bp_profil');
 function amendo_bp_profil($u) {
-    if (!current_user_can(amendo_settings_kapabilitet())) return;
+    if (!current_user_can(amendo_settings_kapabilitet()) || !amendo_bp_har_soknad($u->ID)) return;
     $html = amendo_bp_bruker_html($u->ID);
-    if ($html === '') return;
     $tid = (string) get_user_meta($u->ID, '_amendo_bp_tid', true);
     ?>
     <h2>Bedriftspakke fra søknaden</h2>
     <table class="form-table" role="presentation" id="amendo-bp-profil">
         <tr>
             <th scope="row">Ønsket</th>
-            <td><?php echo $html; // escapet i amendo_bp_bruker_html ?>
+            <td><?php echo $html ?: '—'; // escapet i amendo_bp_bruker_html ?>
                 <p class="description">Anslagene er regnet på nettsiden og er ikke avtalte priser.<?php if ($tid && ($t = strtotime($tid))): ?> Sendt <?php echo esc_html(wp_date('d.m.Y H:i', $t)); ?>.<?php endif; ?></p></td>
+        </tr>
+        <tr>
+            <th scope="row">Oppfølging</th>
+            <td><input type="hidden" name="amendo_bp_oppf_finnes" value="1"><?php amendo_bp_oppfolging_felt($u->ID, 'amendo_bp_oppf'); ?></td>
         </tr>
     </table>
     <?php
+}
+
+// Lagring fra profilen (WordPress har sjekket nonce-en). Krever markøren, så
+// et skjema uten feltene ikke nullstiller noe.
+add_action('personal_options_update', 'amendo_bp_profil_lagre');
+add_action('edit_user_profile_update', 'amendo_bp_profil_lagre');
+function amendo_bp_profil_lagre($bruker_id) {
+    if (empty($_POST['amendo_bp_oppf_finnes']) || !current_user_can(amendo_settings_kapabilitet()) || !current_user_can('edit_user', $bruker_id)) return;
+    if (!amendo_bp_har_soknad($bruker_id)) return;
+    amendo_bp_sett_oppfolging((int) $bruker_id, wp_unslash($_POST['amendo_bp_oppf'] ?? null));
 }
 
 // ── Admin ───────────────────────────────────────────────────────────────────

@@ -135,7 +135,9 @@ function amendo_b2b_behandle($bruker_id, $valg) {
 // (selgerkoden), via filteret amendo_b2b_soknad_tillegg og kroken
 // amendo_b2b_soknad_lagret — se includes/moduler/bedriftspakker.php. Svaret
 // får da også `pakker` og `ref` (filteret amendo_b2b_soknad_svar); uten
-// modulen er det som før.
+// modulen er det som før. 1.4.37: modulen sender e-post til butikken når
+// søknaden har pakker, og har oppfølgingen i Søknader (filteret
+// amendo_b2b_soknad_kolonner, kroken amendo_b2b_etter_soknader).
 
 add_action('rest_api_init', function() {
     register_rest_route('amendo-settings/v1', '/b2b-soknad', [
@@ -269,6 +271,7 @@ add_action('amendo_admin_etter_skjema', function() {
     <form id="amendo-b2b-sok" method="get" action="<?php echo esc_url(admin_url('admin.php')); ?>#b2b">
         <input type="hidden" name="page" value="amendo-settings">
     </form>
+    <?php do_action('amendo_b2b_skjemaer'); // bedriftspakker (1.4.37) ?>
     <?php
 });
 
@@ -332,8 +335,9 @@ add_action('amendo_admin_paneler', function() {
                 <p class="field-help">Ingen søknader venter.</p>
             <?php else: ?>
             <table class="amendo-tabell">
-                <?php $pakke_kolonne = has_action('amendo_b2b_soknad_celle'); // modulen bedriftspakker (1.4.31) ?>
-                <thead><tr><th>Sendt</th><th>Firma</th><th>Org.nr</th><th>Kontaktperson</th><?php if ($pakke_kolonne): ?><th>Pakke</th><?php endif; ?><th>Allerede godkjent på nummeret</th><?php if ($tellix_i_bruk): ?><th>Kundegruppe i Tellix</th><?php endif; ?><th></th></tr></thead>
+                <?php // Kolonner fra andre moduler: bedriftspakker (1.4.31: Pakke; 1.4.37: Ref og Oppfølging). [nøkkel => overskrift]
+                $ekstra = (array) apply_filters('amendo_b2b_soknad_kolonner', []); ?>
+                <thead><tr><th>Sendt</th><th>Firma</th><th>Org.nr</th><th>Kontaktperson</th><?php foreach ($ekstra as $overskrift): ?><th><?php echo esc_html($overskrift); ?></th><?php endforeach; ?><th>Allerede godkjent på nummeret</th><?php if ($tellix_i_bruk): ?><th>Kundegruppe i Tellix</th><?php endif; ?><th></th></tr></thead>
                 <tbody>
                 <?php foreach ($soknader as $u):
                     $orgnr = amendo_b2b_orgnr(get_user_meta($u->ID, '_orgnr_soknad', true));
@@ -347,7 +351,7 @@ add_action('amendo_admin_paneler', function() {
                     <td><?php if ($orgnr): ?><a href="<?php echo esc_url('https://virksomhet.brreg.no/oppslag/enheter/' . $orgnr); ?>" target="_blank" rel="noopener"><?php echo esc_html($orgnr); ?></a><?php else: ?>—<?php endif; ?>
                         <?php if ($hint = amendo_b2b_tellix_hint($orgnr)): // 1.4.29 ?><br><span class="field-help b2b-tellix-hint">Finnes i Tellix: <?php echo esc_html(($hint['navn'] ?: 'kunde ' . $hint['id']) . ', ' . ($hint['epost'] ?: 'uten e-post')); ?>. Sjekk at søkeren hører til bedriften før du godkjenner.</span><?php endif; ?></td>
                     <td><a href="<?php echo esc_url(get_edit_user_link($u->ID)); ?>"><?php echo esc_html(trim($u->first_name . ' ' . $u->last_name) ?: $u->display_name); ?></a><br><span class="field-help"><?php echo esc_html($u->user_email); ?></span></td>
-                    <?php if ($pakke_kolonne): ?><td class="b2b-pakke"><?php do_action('amendo_b2b_soknad_celle', $u); ?></td><?php endif; ?>
+                    <?php foreach (array_keys($ekstra) as $nokkel): ?><td class="b2b-<?php echo esc_attr($nokkel); ?>"><?php do_action('amendo_b2b_soknad_celle', $u, $nokkel); ?></td><?php endforeach; ?>
                     <td><?php echo $andre ? esc_html($andre . ' bruker' . ($andre === 1 ? '' : 'e')) : 'Ingen'; ?></td>
                     <?php if ($tellix_i_bruk): ?>
                     <td><select form="amendo-b2b-behandle" name="gruppe[<?php echo (int) $u->ID; ?>]" aria-label="Kundegruppe hvis kunden opprettes i Tellix"><?php amendo_b2b_tellix_gruppevalg(null); ?></select><br><span class="field-help">Valgfritt. Brukes hvis kunden opprettes i Tellix, og må uansett settes i Tellix backoffice. Styrer rabatt og levering, ikke faktura.</span></td>
@@ -362,6 +366,8 @@ add_action('amendo_admin_paneler', function() {
             </table>
             <?php endif; ?>
         </div>
+
+        <?php do_action('amendo_b2b_etter_soknader'); // bedriftspakker (1.4.37): oppfølgingen ?>
 
         <div class="amendo-card" id="b2b-kunder">
             <h2>Aktive B2B-kunder (<?php echo (int) $kunder['totalt']; ?>)</h2>

@@ -432,6 +432,10 @@
 .b2b-tellix-kandidater { margin-top: 8px; font-size: 12px; }
 .b2b-tellix-web label { display: inline-flex; flex-direction: column; gap: 4px; margin: 0 12px 8px 0; font-size: 12px; }
 .b2b-tellix-web input[type=url] { min-width: 260px; }
+/* Bedriftspakker: oppfølgingen (1.4.37) */
+.bp-oppfolging { display: flex; flex-direction: column; gap: 4px; min-width: 180px; }
+.bp-oppfolging textarea { width: 100%; font-size: 12px; }
+.bp-filter a.current { font-weight: 600; text-decoration: none; color: #111827; }
 @media (max-width: 782px) {
     .amendo-tabell { display: block; overflow-x: auto; }
 }

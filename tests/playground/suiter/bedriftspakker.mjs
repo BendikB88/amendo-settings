@@ -262,7 +262,7 @@ html = await side();
 const soknader = html.slice(html.indexOf('id="b2b-soknader"'), html.indexOf('id="b2b-kunder"'));
 const rad = n => { const i = soknader.indexOf(`data-bruker="${id(n)}"`); return i < 0 ? '' : soknader.slice(i, soknader.indexOf('</tr>', i)); };
 sjekk('kolonnen Pakke i Søknader', soknader.includes('<th>Pakke</th>'));
-sjekk('pakken med personer, dag, hyppighet og anslaget, og selgerkoden', rad('ok').includes('Fredagskos – Stor · 25 personer · fredag · annenhver uke · anslag fra nettsiden ca. 2 492 kr/mnd eks. mva') && rad('ok').includes('Selgerkode: PER-1'), rad('ok'));
+sjekk('pakken med personer, dag, hyppighet og anslaget, og selgerkoden (1.4.37: i kolonnen Ref)', rad('ok').includes('Fredagskos – Stor · 25 personer · fredag · annenhver uke · anslag fra nettsiden ca. 2 492 kr/mnd eks. mva') && rad('ok').includes('<td class="b2b-ref">PER-1</td>'), rad('ok'));
 sjekk('kaken', rad('kake').includes('Kakeabonnement · 40 personer · Sjokoladekake – 12 personer · anslag fra nettsiden ca. 1 467 kr/mnd eks. mva'), rad('kake'));
 sjekk('uten pakke: «—»', rad('tom').includes('<td class="b2b-pakke">—</td>'), rad('tom'));
 const p1 = await profil(id('ok'));
