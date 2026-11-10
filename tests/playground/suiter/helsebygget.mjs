@@ -45,7 +45,10 @@ sjekk('navnet er renset for HTML', html.includes('Kari Nordmann') && !html.inclu
 html = await side();
 sjekk('… og bare den ene gangen', !nyPin(html) && html.includes('Kari Nordmann'));
 let t = await tilstand();
-sjekk('PIN lagres ikke i klartekst (bare HMAC)', !String(t.ansatte_raa).includes(pinKari) && /"pin":"[0-9a-f]{64}"/.test(String(t.ansatte_raa)), t.ansatte_raa);
+// 1.4.38: wp_hash_password() ($wp$2y$ fra WordPress 6.8, $P$ før), ikke HMAC.
+const NY_HASH = /^\$(wp\$2y|2y|P)\$/;
+const pinRaa = JSON.parse(String(t.ansatte_raa) || '[]')[0]?.pin || '';
+sjekk('PIN lagres ikke i klartekst (WordPress-hash, ikke HMAC)', !String(t.ansatte_raa).includes(pinKari) && NY_HASH.test(pinRaa) && !/^[0-9a-f]{64}$/.test(pinRaa), pinRaa.slice(0, 7));
 const kari = t.ansatte[0];
 await handling({ ny_ansatt: '1', navn: 'Ola' });
 const pinOla = nyPin(await side());
@@ -188,6 +191,58 @@ sjekk('maks 200 i loggen', fylt.antall === 200, fylt);
 t = await tilstand();
 sjekk('… de nyeste', JSON.stringify(t.logg[0].lagt_til) === '[205]', t.logg[0]);
 
+// ── PIN uten wp_salt (1.4.38) ───────────────────────────────────────────────
+console.log('\nPIN uten wp_salt (1.4.38)');
+const hasher = () => get('/amendo-test/v1/v1438-hasher');
+const salt = s => get('/amendo-test/v1/v1438-salt', { salt: s });
+await get('/amendo-test/v1/v1417-nullstill-rl');
+r = await logginn(pinKari2);
+const tokenFoer = r.json?.token;
+const vFoer = (await hasher())[kari.id]?.v;
+let g = await get('/amendo-test/v1/v1438-gammel-pin', { id: kari.id, pin: pinKari2 });
+sjekk('gammel hash (HMAC, 64 hex) lagt inn', g.ok && /^[0-9a-f]{64}$/.test(g.pin || ''), g.ok);
+r = await logginn(pinKari2);
+sjekk('gammel hash: riktig PIN virker (sjekket med HMAC-en)', r.status === 200 && r.json?.navn === 'Kari Nordmann', [r.status, r.json]);
+let hs = await hasher();
+sjekk('… og er lagret på nytt som WordPress-hash', NY_HASH.test(hs[kari.id]?.pin || '') && hs[kari.id]?.pin !== g.pin, (hs[kari.id]?.pin || '').slice(0, 7));
+sjekk('… med samme versjon: tokenet fra før virker', hs[kari.id]?.v === vFoer && (await lagre([ids.brod], tokenFoer)).status === 200, [vFoer, hs[kari.id]?.v]);
+r = await logginn(pinKari2);
+sjekk('neste innlogging med den nye hashen', r.status === 200 && (await hasher())[kari.id]?.pin === hs[kari.id]?.pin, r.status);
+g = await get('/amendo-test/v1/v1438-gammel-pin', { id: kari.id, pin: pinKari2 });
+r = await logginn(feilPin);
+sjekk('gammel hash: feil PIN avvist, hashen urørt', r.status === 401 && (await hasher())[kari.id]?.pin === g.pin, r.status);
+await get('/amendo-test/v1/v1417-nullstill-rl');
+r = await logginn(pinKari2);
+sjekk('… riktig PIN etterpå: lagret på nytt', r.status === 200 && NY_HASH.test((await hasher())[kari.id]?.pin || ''), r.status);
+
+// Per får en gammel hash som aldri blir brukt før saltene byttes.
+await handling({ ny_ansatt: '1', navn: 'Per' });
+const pinPer = nyPin(await side());
+const per = (await tilstand()).ansatte.find(a => a.navn === 'Per');
+await get('/amendo-test/v1/v1438-gammel-pin', { id: per.id, pin: pinPer });
+await salt('nye-salter-1438');
+await get('/amendo-test/v1/v1417-nullstill-rl');
+r = await logginn(pinKari2);
+sjekk('nye salter: PIN med ny hash virker fortsatt', r.status === 200 && r.json?.navn === 'Kari Nordmann', [r.status, r.json]);
+const tokenNyeSalter = r.json?.token;
+r = await logginn(pinPer);
+sjekk('nye salter: gammel hash som ikke ble lagret på nytt virker ikke (trenger Ny PIN)', r.status === 401, r.status);
+r = await lagre([ids.brod], tokenFoer);
+sjekk('nye salter: tokenet fra før må logge inn på nytt', r.status === 401, r.status);
+sjekk('… og tokenet fra etter virker', (await lagre([ids.brod], tokenNyeSalter)).status === 200);
+await get('/amendo-test/v1/v1417-nullstill-rl');
+h = await handling({ ny_pin: per.id });
+const pinPer2 = nyPin(await side('&hb=ny_pin'));
+r = await logginn(pinPer2);
+sjekk('Ny PIN etter nye salter: virker, lagret som WordPress-hash', /^\d{6}$/.test(pinPer2 || '') && r.status === 200 && r.json?.navn === 'Per' && NY_HASH.test((await hasher())[per.id]?.pin || ''), [r.status, r.json]);
+await handling({ ny_ansatt: '1', navn: 'Lise' });
+const pinLise = nyPin(await side());
+sjekk('ny ansatt med ulik PIN fra de andre', /^\d{6}$/.test(pinLise || '') && ![pinKari2, pinPer2].includes(pinLise), pinLise?.length);
+await salt('');
+await get('/amendo-test/v1/v1417-nullstill-rl');
+r = await logginn(pinPer2);
+sjekk('saltene tilbake: PIN-en virker fortsatt', r.status === 200 && r.json?.navn === 'Per', r.status);
+
 // ── Tom secret ──────────────────────────────────────────────────────────────
 console.log('\nTom kasse-secret: alt avvist');
 await get('/amendo-test/v1/v1417-nullstill-rl');
@@ -200,5 +255,6 @@ html = await side();
 sjekk('fanen sier at innloggingen er stengt', html.includes('amendo-hb-stengt'));
 
 await get('/amendo-test/v1/v1417-nullstill');
+await salt('');
 await opt({ amendo_kasse_secret: null, amendo_moduler: null, amendo_helsebygget_produkter: null, amendo_helsebygget_skjulte_varianter: null });
 ferdig();

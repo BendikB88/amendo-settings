@@ -9,8 +9,16 @@
  * Nå:
  *   - Ansatte legges inn i Amendo → B2B → Helsebygget (navn + PIN). PIN-en
  *     lages av serveren (6 sifre), vises ÉN gang når den lages, og lagres bare
- *     som HMAC med en nøkkel fra wp-config (wp_salt), ikke i databasen. Uten
- *     nøkkelen hjelper ikke en kopi av databasen til å finne kodene.
+ *     som hash.
+ *     ⚠ 1.4.38: hashen er wp_hash_password()/wp_check_password(), som for
+ *     brukerpassord. Før var den HMAC med wp_salt('auth'), og da saltene ble
+ *     byttet (sikkerhetsopprydding på en butikk), sluttet ALLE PIN-ene å virke.
+ *     Gamle hasher (64 hex-tegn) sjekkes fortsatt med HMAC-en og lagres på nytt
+ *     ved første riktige innlogging. De som ble laget før saltene ble byttet,
+ *     kan ikke reddes — de trenger «Ny PIN». Prisen: en kopi av databasen kan
+ *     prøve alle én million PIN-er mot hashen (tregt, men mulig), så PIN-en
+ *     beskytter innloggingen, ikke databasen. Tokenet (under) bruker fortsatt
+ *     wp_salt — nye salter gir bare ny innlogging.
  *   - POST /helsebygget/admin-innlogging {pin} → {navn, token}. Tokenet er
  *     signert og varer i 12 timer. Ny PIN eller sletting av den ansatte gjør
  *     tokenene til den ansatte ugyldige med en gang (versjonsnummer i tokenet).
@@ -51,7 +59,7 @@ const AMENDO_HB_LOGG_MAKS   = 200;
 
 // ── Ansatte ─────────────────────────────────────────────────────────────────
 
-/** [id => ['id', 'navn', 'pin' (HMAC), 'v', 'opprettet']] */
+/** [id => ['id', 'navn', 'pin' (hash), 'v', 'opprettet']] */
 function amendo_hb_ansatte() {
     $data = json_decode((string) get_option('amendo_helsebygget_ansatte', '[]'), true);
     $ut = [];
@@ -65,17 +73,41 @@ function amendo_hb_ansatte_lagre(array $ansatte) {
     update_option('amendo_helsebygget_ansatte', wp_json_encode(array_values($ansatte)), false);
 }
 
-/** HMAC av PIN-en. Nøkkelen står i wp-config (salts), ikke i databasen. */
+/**
+ * Hash av PIN-en med WordPress sin passord-hash (1.4.38). Avhenger ikke av
+ * saltene i wp-config: før 1.4.38 var det HMAC med wp_salt('auth'), og alle
+ * PIN-ene sluttet å virke da saltene ble byttet.
+ */
 function amendo_hb_pin_hash($pin) {
+    return wp_hash_password((string) $pin);
+}
+
+/** Hashen fra før 1.4.38: HMAC med wp_salt('auth'). Bare for å sjekke gamle. */
+function amendo_hb_pin_hash_gammel($pin) {
     return hash_hmac('sha256', (string) $pin, wp_salt('auth') . '|amendo-helsebygget-pin');
+}
+
+function amendo_hb_pin_er_gammel($hash) {
+    return (bool) preg_match('/^[0-9a-f]{64}$/', (string) $hash);
+}
+
+/** Stemmer PIN-en med den lagrede hashen (ny eller gammel)? */
+function amendo_hb_pin_stemmer($pin, $hash) {
+    $hash = (string) $hash;
+    if ($hash === '') return false;
+    if (amendo_hb_pin_er_gammel($hash)) return hash_equals($hash, amendo_hb_pin_hash_gammel($pin));
+    return wp_check_password((string) $pin, $hash);
 }
 
 /** Ny, unik PIN på 6 sifre. */
 function amendo_hb_ny_pin(array $ansatte) {
-    $brukt = array_column($ansatte, 'pin');
     do {
         $pin = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-    } while (in_array(amendo_hb_pin_hash($pin), $brukt, true));
+        $brukt = false;
+        foreach ($ansatte as $a) {
+            if (isset($a['pin']) && amendo_hb_pin_stemmer($pin, $a['pin'])) { $brukt = true; break; }
+        }
+    } while ($brukt);
     return $pin;
 }
 
@@ -111,13 +143,25 @@ function amendo_hb_slett($id) {
     return true;
 }
 
-/** Den ansatte med PIN-en, eller null. */
+/**
+ * Den ansatte med PIN-en, eller null. En hash fra før 1.4.38 (eller en
+ * passord-hash WordPress vil ha byttet ut) lagres på nytt med en gang PIN-en
+ * stemmer. Versjonen (v) er den samme, så tokenene som finnes, virker fortsatt.
+ */
 function amendo_hb_finn_pin($pin) {
     $pin = preg_replace('/\D/', '', (string) $pin);
     if (strlen($pin) !== 6) return null;
-    $hash = amendo_hb_pin_hash($pin);
     foreach (amendo_hb_ansatte() as $a) {
-        if (hash_equals((string) $a['pin'], $hash)) return $a;
+        if (!amendo_hb_pin_stemmer($pin, $a['pin'])) continue;
+        if (amendo_hb_pin_er_gammel($a['pin']) || (function_exists('wp_password_needs_rehash') && wp_password_needs_rehash($a['pin']))) {
+            $ansatte = amendo_hb_ansatte();
+            // Bare hvis den ikke er endret i mellomtiden (ny PIN, sletting).
+            if (isset($ansatte[$a['id']]) && $ansatte[$a['id']]['pin'] === $a['pin']) {
+                $ansatte[$a['id']]['pin'] = amendo_hb_pin_hash($pin);
+                amendo_hb_ansatte_lagre($ansatte);
+            }
+        }
+        return $a;
     }
     return null;
 }
