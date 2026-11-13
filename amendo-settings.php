@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.39
+ * Version: 1.4.40
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.39');
+define('AMENDO_SETTINGS_VERSION', '1.4.40');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -24,6 +24,7 @@ require_once AMENDO_SETTINGS_PATH . 'includes/ubetalte.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/kortbetaling.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/stengte.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/henting-stengt.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/henting-ukedagsregler.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/lagring.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/kategorivelger.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/leveringsregler.php';
@@ -401,6 +402,8 @@ function amendo_get_leveringsregler() {
             // 1.4.39 — se includes/henting-stengt.php. Alltid med, tomme som standard.
             'stengte_ukedager'   => amendo_henting_stengte_ukedager(),
             'stengte_datoer'     => amendo_henting_stengte_datoer(),
+            // 1.4.40 — se includes/henting-ukedagsregler.php. Alltid med, [] som standard.
+            'ukedagsregler'      => amendo_henting_ukedagsregler_rest(),
             // 1.4.18 — se includes/leveringsregler.php.
             'stengt_helligdager' => amendo_stengt_helligdager(),
             'helligdager'        => amendo_helligdager_rest(),
@@ -865,6 +868,7 @@ function amendo_settings_page() {
                         <p class="field-help">Typisk lørdag og søndag</p>
                     </div>
                     <?php amendo_henting_stengt_felt(); // 1.4.39 — se includes/henting-stengt.php ?>
+                    <?php amendo_henting_ukedagsregler_felt(); // 1.4.40 — se includes/henting-ukedagsregler.php ?>
                     <input type="hidden" name="stengt_helligdager_finnes" value="1">
                     <?php amendo_helligdager_felt(); ?>
                     <?php amendo_mal_henting_felt(); // 1.4.23 ?>

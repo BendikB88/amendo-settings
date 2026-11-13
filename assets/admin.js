@@ -471,6 +471,32 @@ $(document).on('click', '.slett-antall-regel', function() {
         $(this).closest('.sesong-rad').find('.sesong-tittel').text($(this).val() || 'Ny seksjon');
     });
 
+    // ── Egne regler for ukedager (includes/henting-ukedagsregler.php) ──
+    // Nye regler og kategorier fra <template>-ene. Numrene trenger bare være
+    // unike (PHP leser reglene i rekkefølgen i skjemaet).
+    var ukrNr = $('#henting-ukedagsregler [name]').length + 1;
+    $('#ukedagsregel-legg-til').on('click', function() {
+        var mal = $('#ukedagsregel-mal').html();
+        if (!mal) return;
+        var $rad = $(mal.split('__i__').join(String(ukrNr++)));
+        $('#ukedagsregler-liste').append($rad);
+        kategoriVelgere($rad);
+    });
+    $(document).on('click', '.ukedagsregel-ny-kategori', function() {
+        var mal = $('#ukedagsregel-kategori-mal').html();
+        var $rad = $(this).closest('.ukedagsregel-rad');
+        if (!mal || !$rad.length) return;
+        var $k = $(mal.split('__i__').join(String($rad.data('nr'))));
+        $rad.find('.ukedagsregel-kategorier').append($k);
+        kategoriVelgere($k);
+    });
+    $(document).on('click', '.ukedagsregel-fjern-kategori', function() {
+        $(this).closest('.ukedagsregel-kategori').remove();
+    });
+    $(document).on('click', '.ukedagsregel-slett', function() {
+        $(this).closest('.ukedagsregel-rad').remove();
+    });
+
     // ── Bedriftspakker (bare når modulen er på — se includes/moduler/bedriftspakker.php) ──
     // Nye pakker og linjer lages fra <template>-ene PHP har rendret. Numrene i
     // `name` trenger ikke være sammenhengende (PHP leser listene i rekkefølgen
