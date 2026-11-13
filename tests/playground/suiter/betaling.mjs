@@ -66,10 +66,32 @@ for (const [svar, navn] of [['tomt_objekt', 'tomt objekt (var fatal før)'], ['n
 await opt({ stub_adyen_svar: 'ok' });
 
 console.log('\nadyen-session: Klarna og validering');
+await opt({ amendo_frontend_url: null });
 r = await post('adyen-session', { ...kort, payment_method: 'klarna_paynow' });
 t = await tilstand();
 sjekk('Klarna via api_call: 200', r.status === 200 && r.json?.sessionId === 'CS_KLARNA_1', r.json);
 sjekk('Klarna: AmendoPOS merchant account, beløp i øre', t.adyen_kall?.[0] === 'api_call' && t.adyen_kall?.[2]?.merchantAccount === 'AmendoPOS_STUB' && t.adyen_kall?.[2]?.amount?.value === 49900, t.adyen_kall);
+// 1.4.41: returnUrl til frontenden, ikke WordPress sin /checkout.
+sjekk('Klarna uten Frontend-URL og return_url: site_url(checkout) som før', /\/checkout\/?$/.test(t.adyen_kall?.[2]?.returnUrl || ''), t.adyen_kall?.[2]?.returnUrl);
+await opt({ amendo_frontend_url: 'https://butikk.example' });
+await post('adyen-session', { ...kort, payment_method: 'klarna_paynow', reference: '123 4' });
+t = await tilstand();
+sjekk('Klarna med Frontend-URL: <frontend>/kasse/takk?ordre=<reference>', t.adyen_kall?.[2]?.returnUrl === 'https://butikk.example/kasse/takk?ordre=123%204', t.adyen_kall?.[2]?.returnUrl);
+await post('adyen-session', { ...kort, payment_method: 'klarna_paynow', return_url: 'https://kasse.example/kasse/takk?ordre=9' });
+t = await tilstand();
+sjekk('Klarna med return_url (https) i kroppen: den vinner', t.adyen_kall?.[2]?.returnUrl === 'https://kasse.example/kasse/takk?ordre=9', t.adyen_kall?.[2]?.returnUrl);
+await post('adyen-session', { ...kort, payment_method: 'klarna_paynow', returnUrl: 'https://kasse.example/b' });
+t = await tilstand();
+sjekk('… også som returnUrl', t.adyen_kall?.[2]?.returnUrl === 'https://kasse.example/b', t.adyen_kall?.[2]?.returnUrl);
+for (const [ugyldig, navn] of [['http://kasse.example/x', 'http'], ['javascript:alert(1)', 'javascript:'], [['https://a.example'], 'liste']]) {
+  r = await post('adyen-session', { ...kort, payment_method: 'klarna_paynow', return_url: ugyldig });
+  t = await tilstand();
+  sjekk(`return_url ${navn}: ignorert, Frontend-URL brukes, 200`, r.status === 200 && t.adyen_kall?.[2]?.returnUrl === 'https://butikk.example/kasse/takk?ordre=ordre-1', [r.status, t.adyen_kall?.[2]?.returnUrl]);
+}
+await post('adyen-session', { ...kort, return_url: 'https://kasse.example/k' });
+t = await tilstand();
+sjekk('kort: create_session som før (Klarna-endringen rører ikke kortsesjonen)', JSON.stringify(t.adyen_kall) === JSON.stringify(['create_session', 499, 'ordre-1', 'NO', 'NOK']), t.adyen_kall);
+await opt({ amendo_frontend_url: null });
 await opt({ stub_adyen_svar: 'tom_array' });
 r = await post('adyen-session', { ...kort, payment_method: 'klarna_paynow' });
 sjekk('Klarna tomt svar: 502 JSON', r.status === 502 && erJson(r), r);

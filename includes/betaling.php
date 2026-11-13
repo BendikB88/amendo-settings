@@ -161,7 +161,7 @@ function amendo_create_adyen_session_inner($request) {
                 'value'    => $amount * 100,
             ],
             'countryCode'     => $country ?: WC()->countries->get_base_country(),
-            'returnUrl'       => site_url('checkout'),
+            'returnUrl'       => amendo_klarna_retur_url($body, $ref),
             'channel'         => 'Web',
             'reference'       => get_site_url() . '/' . $ref,
         ]);
@@ -186,6 +186,24 @@ function amendo_create_adyen_session_inner($request) {
         'clientKey'   => $client_key,
         'environment' => $live ? 'live' : 'test',
     ], 200);
+}
+
+/**
+ * Hvor Adyen sender kunden etter Klarna (1.4.41). Før: site_url('checkout'),
+ * WordPress sin kasse, som er 404 i en headless-butikk.
+ *   1. `return_url` (eller `returnUrl`) i kroppen, når den er https (localhost
+ *      for lokal utvikling) — som /gateway-redirect og /adyen-betal.
+ *   2. Frontend-URL fra innstillingene + `/kasse/takk?ordre=<reference>`,
+ *      kvitteringen i alle frontendene. Adyen legger på `redirectResult` selv.
+ *   3. site_url('checkout') som før, når ingen av dem finnes.
+ */
+function amendo_klarna_retur_url(array $body, $ref) {
+    $inn = $body['return_url'] ?? ($body['returnUrl'] ?? '');
+    $fra_kassen = is_string($inn) ? amendo_kortbetaling_url($inn) : '';
+    if ($fra_kassen !== '') return $fra_kassen;
+    $frontend = amendo_frontend_url();
+    if ($frontend !== '') return $frontend . '/kasse/takk?ordre=' . rawurlencode((string) $ref);
+    return site_url('checkout');
 }
 
 /** client_key fra kortgatewayen: bindestrek-ID først, understrek som reserve. */

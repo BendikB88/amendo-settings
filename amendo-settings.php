@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.40
+ * Version: 1.4.41
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.40');
+define('AMENDO_SETTINGS_VERSION', '1.4.41');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
@@ -22,6 +22,7 @@ require_once AMENDO_SETTINGS_PATH . 'includes/betaling.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/bedrift.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/ubetalte.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/kortbetaling.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/belopssikring.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/stengte.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/henting-stengt.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/henting-ukedagsregler.php';

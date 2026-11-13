@@ -345,9 +345,12 @@ function amendo_kortbetaling_resultat(WC_Order $ordre, array $svar, int $ore) {
             // Beløpet Adyen autoriserte, når svaret har det, skal være ordrens.
             $autorisert = $svar['amount']['value'] ?? null;
             if ($autorisert !== null && (int) $autorisert !== $ore) {
-                amendo_betaling_logg('kortbetaling: Adyen autoriserte ' . $autorisert . " øre, ordre {$ordre->get_id()} er $ore — IKKE markert betalt");
-                $ordre->add_order_note("Adyen: autorisert beløp ($autorisert øre) avviker fra ordren ($ore øre). Kontroller i Adyen før ordren behandles.");
-                $ordre->save();
+                // ⚠ Beløpssikring (1.4.41): «On hold» med notat, ALDRI
+                // «Behandler» — se includes/belopssikring.php. Transaksjonen
+                // lagres, så butikken finner den i Adyen.
+                $ordre->update_meta_data('_adyen_pspReference', $psp);
+                if ($psp !== '') $ordre->set_transaction_id($psp);
+                $ordre->update_status('on-hold', amendo_belopssikring_on_hold($ordre, (int) $autorisert, $ore, 'kort, headless-kasse'));
                 break;
             }
             if ($ordre->needs_payment()) {

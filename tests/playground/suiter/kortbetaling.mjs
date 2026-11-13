@@ -131,7 +131,7 @@ await opt({ stub_kort_svar: 'feil_belop' });
 ({ id } = await ordre());
 r = await post('adyen-betal', betal(id));
 s = await status(id);
-sjekk('Authorised med annet beløp → IKKE markert betalt, notat', s.status === 'pending' && s.notater.some(n => n.includes('avviker')), s);
+sjekk('Authorised med annet beløp → «On hold» med notat, ikke «Behandler»', s.status === 'on-hold' && s.notater.some(n => n.includes('Beløpssikring')), s);
 for (const [svar, navn] of [['wp_error', 'WP_Error fra gatewayen'], ['kaster', 'unntak fra gatewayen']]) {
   await opt({ stub_kort_svar: svar });
   ({ id } = await ordre());
