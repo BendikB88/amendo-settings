@@ -77,6 +77,31 @@
  * fram). Vises i Søknader (kolonnen Pakke) og på brukerprofilen. Er modulen
  * av, ignoreres feltene, og svaret er som før.
  *
+ * ── Egen forespørsel (1.4.42) ─────────────────────────────────────────────
+ * Kunden kan beskrive noe som ikke er en av pakkene. POST /b2b-soknad tar
+ * `egen_foresporsel`, alene eller sammen med `pakker` (valgfri, som dem):
+ *
+ *     egen_foresporsel: {
+ *       beskrivelse:     tekst, påkrevd, 1–2000 tegn (linjeskift beholdes,
+ *                        HTML og kontrolltegn fjernes)
+ *       hyppighet:       'en_gang' | 'ukentlig' | 'annenhver_uke' | 'manedlig', påkrevd
+ *       ukedag:          'mandag' … 'søndag' (med ø), valgfri ('' / null = ingen)
+ *       oppstart:        'YYYY-MM-DD', valgfri ('' / null = ingen)
+ *       antall_personer: heltall 1–10 000, påkrevd
+ *     }
+ *
+ * Feil gir 400 `amendo_b2b_soknad_ugyldig_egen` med en norsk melding, og
+ * ingenting lagres (heller ikke pakkene i samme kall). Lagret på brukeren som
+ *
+ *     _amendo_bp_egen   { beskrivelse, hyppighet, ukedag, oppstart, antall_personer, tid }
+ *
+ * og `_amendo_bp_tid` settes, så bedriften får oppfølging (statusene og Ref)
+ * som pakkene. Et nytt kall uten feltet (eller med null) lar det lagrede stå.
+ * Svaret får alltid `egen_foresporsel`: det lagrede (uten `tid`) eller null.
+ * Butikken får e-posten med en egen del merket «EGEN FORESPØRSEL», og den
+ * vises i Søknader (kolonnen Pakke), i oppfølgingskortet og på
+ * brukerprofilen. Ingen ordre lages, ingen pris regnes.
+ *
  * ── E-post og oppfølging (1.4.37) ─────────────────────────────────────────
  * En søknad med pakker gir butikken en e-post (se amendo_bp_varsle()), og
  * hver bedrift har en oppfølgingsstatus (Ny, Kontaktet, Avtale startet, Ikke
@@ -112,6 +137,14 @@ const AMENDO_BP_MAKS_PERSONER = 10000;
 const AMENDO_BP_MAKS_PAKKER = 20;
 const AMENDO_BP_ID = '/^[a-z0-9][a-z0-9-]{0,39}$/';
 const AMENDO_BP_MAKS_NIVAER = 10;
+// Egen forespørsel (1.4.42): nøkkel => navn.
+const AMENDO_BP_EGEN_HYPPIGHETER = [
+    'en_gang'       => 'Én gang',
+    'ukentlig'      => 'Ukentlig',
+    'annenhver_uke' => 'Annenhver uke',
+    'manedlig'      => 'Månedlig',
+];
+const AMENDO_BP_MAKS_BESKRIVELSE = 2000;
 
 // ── Pakkene ─────────────────────────────────────────────────────────────────
 
@@ -467,6 +500,13 @@ add_filter('amendo_b2b_soknad_tillegg', function($tillegg, WP_REST_Request $req)
         $ut['bp_ref'] = $ref;
     }
 
+    // 1.4.42: egen forespørsel, alene eller sammen med pakkene.
+    if (array_key_exists('egen_foresporsel', $params) && $params['egen_foresporsel'] !== null) {
+        $egen = amendo_bp_egen_rens($params['egen_foresporsel']);
+        if (is_wp_error($egen)) return $egen;
+        $ut['bp_egen'] = $egen;
+    }
+
     if (!array_key_exists('pakker', $params) || $params['pakker'] === null) return $ut;
     $inn = $params['pakker'];
     if (!is_array($inn) || array_values($inn) !== $inn || count($inn) > AMENDO_BP_MAKS_PAKKER) {
@@ -553,10 +593,58 @@ add_filter('amendo_b2b_soknad_tillegg', function($tillegg, WP_REST_Request $req)
     return $ut;
 }, 10, 2);
 
+/**
+ * `egen_foresporsel` fra søknaden (1.4.42), renset, eller WP_Error (400).
+ * Se toppkommentaren for kontrakten.
+ */
+function amendo_bp_egen_rens($inn) {
+    $feil = function($m) { return amendo_bp_feil($m, 'amendo_b2b_soknad_ugyldig_egen'); };
+    if (!is_array($inn) || ($inn && array_values($inn) === $inn)) return $feil('egen_foresporsel må være et objekt.');
+
+    $b = $inn['beskrivelse'] ?? null;
+    if (!is_string($b)) return $feil('Beskriv hva dere ønsker (beskrivelse).');
+    $b = trim(sanitize_textarea_field(str_replace("\r\n", "\n", $b)));
+    if ($b === '') return $feil('Beskriv hva dere ønsker (beskrivelse).');
+    if (mb_strlen($b) > AMENDO_BP_MAKS_BESKRIVELSE) return $feil('Beskrivelsen kan være høyst ' . AMENDO_BP_MAKS_BESKRIVELSE . ' tegn.');
+
+    $h = $inn['hyppighet'] ?? null;
+    if (!is_string($h) || !isset(AMENDO_BP_EGEN_HYPPIGHETER[$h])) {
+        return $feil('hyppighet må være én av ' . implode(', ', array_keys(AMENDO_BP_EGEN_HYPPIGHETER)) . '.');
+    }
+
+    $dag = $inn['ukedag'] ?? null;
+    if ($dag !== null && !is_string($dag)) return $feil('ukedag må være tekst.');
+    $dag = mb_strtolower(trim((string) $dag));
+    if ($dag !== '' && !in_array($dag, AMENDO_BP_DAGER, true)) return $feil('ukedag må være en ukedag (mandag–søndag).');
+
+    $start = $inn['oppstart'] ?? null;
+    if ($start !== null && !is_string($start)) return $feil('oppstart må være en dato (ÅÅÅÅ-MM-DD).');
+    $start = trim((string) $start);
+    if ($start !== '') {
+        $d = DateTimeImmutable::createFromFormat('!Y-m-d', $start);
+        if (!$d || $d->format('Y-m-d') !== $start) return $feil('oppstart må være en dato (ÅÅÅÅ-MM-DD).');
+    }
+
+    $personer = amendo_bp_heltall($inn['antall_personer'] ?? null);
+    if ($personer === null || $personer > AMENDO_BP_MAKS_PERSONER) {
+        return $feil('antall_personer må være et heltall fra 1 til ' . AMENDO_BP_MAKS_PERSONER . '.');
+    }
+
+    return ['beskrivelse' => $b, 'hyppighet' => $h, 'ukedag' => $dag, 'oppstart' => $start, 'antall_personer' => $personer];
+}
+
+/** Den lagrede egne forespørselen, eller null. */
+function amendo_bp_egen($bruker_id) {
+    $e = get_user_meta($bruker_id, '_amendo_bp_egen', true);
+    return is_array($e) && ($e['beskrivelse'] ?? '') !== '' ? $e : null;
+}
+
 add_action('amendo_b2b_soknad_lagret', function($bruker_id, $tillegg) {
-    if (!is_array($tillegg) || (!array_key_exists('bp_onske', $tillegg) && !array_key_exists('bp_ref', $tillegg))) return;
+    if (!is_array($tillegg) || (!array_key_exists('bp_onske', $tillegg) && !array_key_exists('bp_ref', $tillegg) && !array_key_exists('bp_egen', $tillegg))) return;
     if (array_key_exists('bp_onske', $tillegg)) update_user_meta($bruker_id, '_amendo_bp_onske', $tillegg['bp_onske']);
     if (array_key_exists('bp_ref', $tillegg)) update_user_meta($bruker_id, '_amendo_bp_ref', $tillegg['bp_ref']);
+    // wp_slash: update_user_meta() fjerner én backslash, og beskrivelsen er fri tekst.
+    if (array_key_exists('bp_egen', $tillegg)) update_user_meta($bruker_id, '_amendo_bp_egen', wp_slash($tillegg['bp_egen'] + ['tid' => gmdate('c')]));
     update_user_meta($bruker_id, '_amendo_bp_tid', gmdate('c'));
 }, 10, 2);
 
@@ -566,8 +654,21 @@ add_filter('amendo_b2b_soknad_svar', function($svar, $bruker_id) {
     $onsker = get_user_meta($bruker_id, '_amendo_bp_onske', true);
     $svar['pakker'] = is_array($onsker) ? array_values($onsker) : [];
     $svar['ref'] = (string) get_user_meta($bruker_id, '_amendo_bp_ref', true);
+    $egen = amendo_bp_egen($bruker_id);
+    if ($egen) unset($egen['tid']);
+    $svar['egen_foresporsel'] = $egen;
     return $svar;
 }, 10, 2);
+
+/** «25 personer · ukentlig · fredag · oppstart 01.12.2026». */
+function amendo_bp_egen_sammendrag(array $e) {
+    $deler = [];
+    if (!empty($e['antall_personer'])) $deler[] = (int) $e['antall_personer'] . ' personer';
+    if (!empty($e['hyppighet'])) $deler[] = mb_strtolower(AMENDO_BP_EGEN_HYPPIGHETER[$e['hyppighet']] ?? $e['hyppighet']);
+    if (!empty($e['ukedag'])) $deler[] = (string) $e['ukedag'];
+    if (!empty($e['oppstart']) && ($d = DateTimeImmutable::createFromFormat('!Y-m-d', $e['oppstart']))) $deler[] = 'oppstart ' . $d->format('d.m.Y');
+    return implode(' · ', $deler);
+}
 
 /** «Fredagskos · 25 personer · fredag · annenhver uke · anslag fra nettsiden ca. 2 400 kr/mnd eks. mva». */
 function amendo_bp_onske_tekst(array $o) {
@@ -584,13 +685,24 @@ function amendo_bp_onske_tekst(array $o) {
     return implode(' · ', $deler);
 }
 
-/** Pakkene (og selgerkoden) på brukeren, som HTML-linjer. Tom streng når ingenting er lagret. */
+/**
+ * Pakkene, den egne forespørselen og selgerkoden på brukeren, som HTML-linjer.
+ * Tom streng når ingenting er lagret. På profilen ($med_ref) vises hele
+ * beskrivelsen, i listene de første 200 tegnene.
+ */
 function amendo_bp_bruker_html($bruker_id, $med_ref = true) {
     $onsker = get_user_meta($bruker_id, '_amendo_bp_onske', true);
     $ref = (string) get_user_meta($bruker_id, '_amendo_bp_ref', true);
     $linjer = [];
     foreach (is_array($onsker) ? $onsker : [] as $o) {
         if (is_array($o)) $linjer[] = '<span class="bp-onske">' . esc_html(amendo_bp_onske_tekst($o)) . '</span>';
+    }
+    if ($egen = amendo_bp_egen($bruker_id)) {
+        $b = (string) $egen['beskrivelse'];
+        if (!$med_ref && mb_strlen($b) > 200) $b = mb_substr($b, 0, 200) . '…';
+        $sammendrag = amendo_bp_egen_sammendrag($egen);
+        $linjer[] = '<span class="bp-egen"><strong>Egen forespørsel</strong>' . ($sammendrag !== '' ? ' · ' . esc_html($sammendrag) : '')
+            . '<br><span class="bp-egen-beskrivelse">' . nl2br(esc_html($b)) . '</span></span>';
     }
     if ($med_ref && $ref !== '') $linjer[] = '<span class="bp-ref">Selgerkode: ' . esc_html($ref) . '</span>';
     return implode('<br>', $linjer);
@@ -621,15 +733,17 @@ function amendo_bp_kontakt_navn(WP_User $u) {
     return $navn !== '' ? $navn : (string) $u->display_name;
 }
 
-function amendo_bp_varsle($bruker_id, array $onsker) {
+function amendo_bp_varsle($bruker_id, array $onsker, $egen = null) {
     $u = get_userdata($bruker_id);
-    if (!$u || !$onsker) return false;
+    $egen = is_array($egen) && ($egen['beskrivelse'] ?? '') !== '' ? $egen : null;
+    if (!$u || (!$onsker && !$egen)) return false;
     wp_cache_delete($bruker_id, 'user_meta');
     $status = (string) get_user_meta($bruker_id, '_b2b_status', true);
     $orgnr  = amendo_b2b_orgnr(get_user_meta($bruker_id, '_orgnr_soknad', true) ?: get_user_meta($bruker_id, 'billing_org_number', true));
     $ref    = (string) get_user_meta($bruker_id, '_amendo_bp_ref', true);
 
-    $hash = md5(wp_json_encode([$onsker, $ref, $orgnr, $status]));
+    // Uten egen forespørsel er hashen som i 1.4.37 (ingen ny e-post etter oppdateringen).
+    $hash = md5(wp_json_encode($egen ? [$onsker, $ref, $orgnr, $status, $egen] : [$onsker, $ref, $orgnr, $status]));
     $sist = get_user_meta($bruker_id, '_amendo_bp_varslet', true);
     if (is_array($sist) && ($sist['hash'] ?? '') === $hash && time() - (int) ($sist['tid'] ?? 0) < DAY_IN_SECONDS) return false;
 
@@ -649,9 +763,24 @@ function amendo_bp_varsle($bruker_id, array $onsker) {
         'E-post: ' . $epost,
         'Selgerkode (ref): ' . ($ref !== '' ? $ref : '—'),
         'Søknaden: ' . ($status === 'godkjent' ? 'godkjent automatisk (bedriften finnes i Tellix)' : ($status === 'venter' ? 'venter på godkjenning' : ($status !== '' ? $status : '—'))),
-        '',
-        count($onsker) === 1 ? 'Pakke:' : 'Pakker:',
     ];
+    if ($egen) {
+        // 1.4.42: tydelig skilt fra pakkene — dette er ikke noe vi har priset.
+        $linjer[] = '';
+        $linjer[] = '=== EGEN FORESPØRSEL ===';
+        $linjer[] = 'Egen forespørsel (ikke en av pakkene, ingen pris er regnet):';
+        $linjer[] = '  Antall personer: ' . (int) $egen['antall_personer'];
+        $linjer[] = '  Hyppighet: ' . mb_strtolower(AMENDO_BP_EGEN_HYPPIGHETER[$egen['hyppighet']] ?? (string) $egen['hyppighet']);
+        if (!empty($egen['ukedag'])) $linjer[] = '  Ukedag: ' . $egen['ukedag'];
+        if (!empty($egen['oppstart']) && ($d = DateTimeImmutable::createFromFormat('!Y-m-d', $egen['oppstart']))) $linjer[] = '  Oppstart: ' . $d->format('d.m.Y');
+        $linjer[] = '  Beskrivelse:';
+        foreach (explode("\n", (string) $egen['beskrivelse']) as $l) $linjer[] = '    ' . $l;
+        $linjer[] = '=== SLUTT PÅ EGEN FORESPØRSEL ===';
+    }
+    if ($onsker) {
+        $linjer[] = '';
+        $linjer[] = count($onsker) === 1 ? 'Pakke:' : 'Pakker:';
+    }
     foreach ($onsker as $o) {
         if (!is_array($o)) continue;
         $linjer[] = '';
@@ -666,13 +795,18 @@ function amendo_bp_varsle($bruker_id, array $onsker) {
         if (isset($n['pris_eks_per_levering'])) $linjer[] = '  Anslag per levering: ca. ' . $kr($n['pris_eks_per_levering']) . ' eks. mva';
         if (isset($n['fra_eks_per_person'])) $linjer[] = '  Fra ' . $kr($n['fra_eks_per_person']) . ' per person eks. mva';
     }
-    $linjer[] = '';
-    $linjer[] = 'Anslagene er regnet på nettsiden og er ikke avtalte priser.';
+    if ($onsker) {
+        $linjer[] = '';
+        $linjer[] = 'Anslagene er regnet på nettsiden og er ikke avtalte priser.';
+    }
     $linjer[] = '';
     if ($status === 'venter') $linjer[] = 'Søknaden i admin: ' . admin_url('admin.php?page=amendo-settings#b2b');
     $linjer[] = 'Brukeren i admin: ' . admin_url('user-edit.php?user_id=' . (int) $bruker_id);
 
-    $emne = 'Bedriftspakke: søknad fra ' . ($firma !== '' ? $firma : ($orgnr !== '' ? 'org.nr. ' . amendo_bp_orgnr_tekst($orgnr) : $epost));
+    $fra = $firma !== '' ? $firma : ($orgnr !== '' ? 'org.nr. ' . amendo_bp_orgnr_tekst($orgnr) : $epost);
+    // Emnet uten egen forespørsel er som før (1.4.37).
+    $emne = !$egen ? 'Bedriftspakke: søknad fra ' . $fra
+        : ($onsker ? 'Bedriftspakke + egen forespørsel: søknad fra ' . $fra : 'Bedriftspakke – egen forespørsel fra ' . $fra);
     $hoder = ['Content-Type: text/plain; charset=UTF-8'];
     if (is_email($epost)) $hoder[] = 'Reply-To: ' . str_replace(['<', '>', '"', "\r", "\n"], '', amendo_bp_kontakt_navn($u)) . ' <' . $epost . '>';
 
@@ -682,9 +816,11 @@ function amendo_bp_varsle($bruker_id, array $onsker) {
 }
 
 // Etter at søknaden er lagret (også når den ble godkjent automatisk). Bare
-// når DETTE kallet hadde pakker — et kall med bare selgerkode sender ingenting.
+// når DETTE kallet hadde pakker eller en egen forespørsel (1.4.42) — et kall
+// med bare selgerkode sender ingenting.
 add_action('amendo_b2b_soknad_lagret', function($bruker_id, $tillegg) {
-    if (is_array($tillegg) && !empty($tillegg['bp_onske'])) amendo_bp_varsle((int) $bruker_id, $tillegg['bp_onske']);
+    if (!is_array($tillegg) || (empty($tillegg['bp_onske']) && empty($tillegg['bp_egen']))) return;
+    amendo_bp_varsle((int) $bruker_id, is_array($tillegg['bp_onske'] ?? null) ? $tillegg['bp_onske'] : [], $tillegg['bp_egen'] ?? null);
 }, 20, 2);
 
 // ── Oppfølging (1.4.37) ─────────────────────────────────────────────────────
@@ -854,7 +990,7 @@ add_action('amendo_b2b_etter_soknader', function() {
     ?>
     <div class="amendo-card" id="bp-oppfolging">
         <h2>Oppfølging av bedriftspakker (<?php echo (int) $alle['totalt']; ?>)</h2>
-        <p class="amendo-desc">Alle som har søkt med en pakke eller selgerkode, også de som er godkjent. Ref er selgerkoden fra lenken callsenteret sendte. Butikken får en e-post når en søknad med pakke kommer inn.</p>
+        <p class="amendo-desc">Alle som har søkt med en pakke, en egen forespørsel eller selgerkode, også de som er godkjent. Ref er selgerkoden fra lenken callsenteret sendte. Butikken får en e-post når en søknad med pakke eller egen forespørsel kommer inn.</p>
         <?php if ($melding): ?>
             <div class="amendo-b2b-melding amendo-b2b-melding-<?php echo esc_attr($melding[0]); ?>" id="bp-oppfolging-melding"><?php echo esc_html($melding[1]); ?></div>
         <?php endif; ?>
@@ -866,7 +1002,7 @@ add_action('amendo_b2b_etter_soknader', function() {
         </p>
         <?php if ($alle['totalt'] > count($alle['brukere'])): ?><p class="field-help">Viser de <?php echo count($alle['brukere']); ?> nyeste.</p><?php endif; ?>
         <?php if (!$rader): ?>
-            <p class="field-help"><?php echo $filter !== '' ? 'Ingen med denne statusen.' : 'Ingen har søkt med pakke ennå.'; ?></p>
+            <p class="field-help"><?php echo $filter !== '' ? 'Ingen med denne statusen.' : 'Ingen har søkt med pakke eller egen forespørsel ennå.'; ?></p>
         <?php else: ?>
         <table class="amendo-tabell">
             <thead><tr><th>Sendt</th><th>Firma</th><th>Org.nr</th><th>Kontaktperson</th><th>Pakke</th><th>Ref</th><th>Søknad</th><th>Oppfølging</th><th></th></tr></thead>

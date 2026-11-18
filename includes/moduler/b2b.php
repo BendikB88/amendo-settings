@@ -137,7 +137,9 @@ function amendo_b2b_behandle($bruker_id, $valg) {
 // får da også `pakker` og `ref` (filteret amendo_b2b_soknad_svar); uten
 // modulen er det som før. 1.4.37: modulen sender e-post til butikken når
 // søknaden har pakker, og har oppfølgingen i Søknader (filteret
-// amendo_b2b_soknad_kolonner, kroken amendo_b2b_etter_soknader).
+// amendo_b2b_soknad_kolonner, kroken amendo_b2b_etter_soknader). 1.4.42:
+// `egen_foresporsel` (fritekst, hyppighet, ukedag, oppstart, personer) —
+// også alene; svaret får `egen_foresporsel` (null uten).
 
 add_action('rest_api_init', function() {
     register_rest_route('amendo-settings/v1', '/b2b-soknad', [

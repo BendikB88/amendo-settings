@@ -251,7 +251,8 @@ u = (await tilstand([id('ref')])).brukere[id('ref')];
 sjekk('bare selgerkode (trimmet): svaret har pakker [] og ref', r.status === 200 && JSON.stringify(r.json?.pakker) === '[]' && r.json?.ref === 'Kari Selger' && u.ref === 'Kari Selger' && u.onske === '', [r.json, u]);
 r = await soknad({ bruker_id: id('tom'), org_nr: '911222333' });
 u = (await tilstand([id('tom')])).brukere[id('tom')];
-sjekk('uten pakker og ref: svaret har pakker [] og ref \'\', ingenting lagret', r.tekst === '{"ok":true,"status":"venter","org_nr":"911222333","pakker":[],"ref":""}' && u.onske === '' && u.ref === '' && u.tid === '', [r.tekst, u]);
+// 1.4.42: + egen_foresporsel (null uten), se suiten bp-egen.
+sjekk('uten pakker og ref: svaret har pakker [] og ref \'\', ingenting lagret', r.tekst === '{"ok":true,"status":"venter","org_nr":"911222333","pakker":[],"ref":"","egen_foresporsel":null}' && u.onske === '' && u.ref === '' && u.tid === '', [r.tekst, u]);
 await soknad({ bruker_id: id('ok'), org_nr: '911222333' });
 r = await soknad({ bruker_id: id('ok'), org_nr: '911222333', ref: 'PER-1' });
 sjekk('nytt kall uten pakker beholder pakken; ny ref erstatter den gamle', r.json?.pakker?.[0]?.pakke_id === 'fredagskos' && r.json.ref === 'PER-1', r.json);

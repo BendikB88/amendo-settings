@@ -187,7 +187,7 @@ sjekk('bruker uten pakke eller selgerkode: ingenting lagret', pl.oppfolging === 
 // ── REST og kilden ──────────────────────────────────────────────────────────
 console.log('\nREST og kildekoden');
 r = await soknad({ bruker_id: id('ref'), org_nr: '911222333' });
-sjekk('søknadssvaret har ingen oppfølging', r.status === 200 && JSON.stringify(Object.keys(r.json || {})) === '["ok","status","org_nr","pakker","ref"]', r.tekst);
+sjekk('søknadssvaret har ingen oppfølging', r.status === 200 && JSON.stringify(Object.keys(r.json || {})) === '["ok","status","org_nr","pakker","ref","egen_foresporsel"]', r.tekst);
 const kilde = readFileSync(resolve(REPO, 'includes/moduler/bedriftspakker.php'), 'utf8');
 const kode = kilde.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 sjekk('ingen butikknavn i modulen', !/Aanerud|Garçon|Garcon|emmk|Jessheim|Dorothea/i.test(kilde));
