@@ -444,3 +444,4 @@ require_once __DIR__ . '/b2b-flytting.php';
 require_once __DIR__ . '/b2b-tellix-bedrifter.php';
 require_once __DIR__ . '/b2b-kundegrupper.php';
 require_once __DIR__ . '/b2b-orgnr-ordre.php';
+require_once __DIR__ . '/b2b-faktura-kasse.php'; // 1.4.43, bare uten Frontend-URL

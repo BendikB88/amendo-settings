@@ -70,3 +70,34 @@ add_filter('woocommerce_admin_billing_fields', function($felt) {
     if (!isset($ny['org_number'])) $ny['org_number'] = ['label' => 'Org.nr.', 'show' => false];
     return $ny;
 });
+
+// ── Org.nr. fra kassen i et vanlig tema (1.4.43) ────────────────────────────
+//
+// Uten headless-frontend (Frontend-URL tom) er det ingen som skriver
+// `_billing_org_number` på ordren. Når en GODKJENT bedrift handler — kunden har
+// `billing_org_number` med ni siffer, som Godkjenn i Søknader og automatisk
+// godkjenning skriver — kopieres nummeret fra kunden til ordren når ordren
+// lages i kassen: den klassiske (woocommerce_checkout_create_order) og Store
+// API-kassen (woocommerce_store_api_checkout_update_order_from_request). Da
+// vises det som over: i wp-admin, e-postene og PDF-fakturaen.
+//
+// Et nummer som alt står på ordren, overskrives aldri. Gjester, kunder uten
+// godkjent org.nr, ordrer fra wp-admin og REST (wc/v3) røres ikke. Med
+// Frontend-URL satt: ingenting (frontenden skriver nummeret selv).
+
+/** Kundens godkjente org.nr. (ni siffer), eller ''. */
+function amendo_orgnr_for_kunde($kunde_id) {
+    $kunde_id = (int) $kunde_id;
+    if ($kunde_id <= 0) return '';
+    $nr = amendo_b2b_orgnr(get_user_meta($kunde_id, 'billing_org_number', true));
+    return strlen($nr) === 9 ? $nr : '';
+}
+
+function amendo_orgnr_fra_kunden($ordre) {
+    if (!$ordre instanceof WC_Order || amendo_frontend_url() !== '') return;
+    if (preg_replace('/\D/', '', (string) $ordre->get_meta(AMENDO_ORGNR_ORDREMETA)) !== '') return;
+    $nr = amendo_orgnr_for_kunde($ordre->get_customer_id());
+    if ($nr !== '') $ordre->update_meta_data(AMENDO_ORGNR_ORDREMETA, $nr);
+}
+add_action('woocommerce_checkout_create_order', function($ordre) { amendo_orgnr_fra_kunden($ordre); }, 20);
+add_action('woocommerce_store_api_checkout_update_order_from_request', function($ordre) { amendo_orgnr_fra_kunden($ordre); }, 20);
