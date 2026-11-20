@@ -298,6 +298,28 @@ function amendo_kg_kort() {
         <?php amendo_lagring_felt('kundegrupper'); ?>
         <h2>Kundegrupper</h2>
         <p class="amendo-desc">Gruppene kommer fra Tellix. Her bestemmer du hva hver gruppe får på nettsiden.</p>
+        <?php
+        /*
+         * Når ble satsene sist bekreftet mot Tellix? Står det lenge siden, kan
+         * nettsiden vise satser fra kopien — og da er det Tellix eller
+         * timesjobben som må ses på, ikke tabellen under.
+         */
+        $kopitid = function_exists('amendo_tellix_kopi_tid') ? amendo_tellix_kopi_tid() : 0;
+        if ($tilgjengelig):
+            $gammel_kopi = $kopitid > 0 && (time() - $kopitid) > 6 * HOUR_IN_SECONDS;
+        ?>
+            <p class="<?php echo $gammel_kopi ? 'amendo-advarsel' : 'field-help'; ?> amendo-kopi-tid">
+                <?php if ($kopitid > 0): ?>
+                    <?php echo $gammel_kopi ? '⚠ ' : ''; ?>Satsene ble sist bekreftet mot Tellix
+                    <?php echo esc_html(human_time_diff($kopitid, time())); ?> siden
+                    (<?php echo esc_html(wp_date('j. F Y H:i', $kopitid)); ?>).
+                    <?php if ($gammel_kopi): ?>Sjekk at Tellix svarer og at timesjobben kjører.<?php endif; ?>
+                <?php else: ?>
+                    Satsene er ikke bekreftet mot Tellix ennå. Svarer ikke Tellix, har nettsiden
+                    ingen kopi å falle tilbake på, og kundene får ingen rabatt.
+                <?php endif; ?>
+            </p>
+        <?php endif; ?>
         <?php if ($tilgjengelig && amendo_tellix_liste_avkortet()): ?>
             <p class="amendo-advarsel amendo-tellix-avkortet">⚠ Tellix-lista kan være avkortet: hev AMENDO_CUSTOMER_SYNC_SIZE. amendo-core har <?php echo (int) $info['antall']; ?> kunder, og grensen er <?php echo (int) $info['grense']; ?>. Kunder etter grensen blir aldri funnet i Tellix.</p>
         <?php endif; ?>

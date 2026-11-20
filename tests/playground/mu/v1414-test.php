@@ -18,6 +18,7 @@ add_action('rest_api_init', function() {
         $map = [
             'moduler' => 'amendo_moduler', 'tellix' => 'amendo_test_tellix', 'grupper' => 'amendo_test_tellix_grupper',
             'kunder' => 'amendo_test_tellix_kunder', 'sov' => 'amendo_test_tellix_sov', 'kast' => 'amendo_test_tellix_kast',
+            'rabattkast' => 'amendo_test_tellix_rabattkast',
             'helsebygget' => 'amendo_helsebygget_grupper', 'store_groups' => 'amendo-store-groups',
             'avdelinger' => 'amendo_avdelinger', 'stengte' => 'amendo_stengte_perioder',
             'kundegrupper' => 'amendo_kundegruppe_config', 'sync_size' => 'amendo_test_sync_size',

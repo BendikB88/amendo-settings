@@ -55,6 +55,12 @@ const AMENDO_TELLIX_KLASSE          = 'Amendo\Customers';
 const AMENDO_TELLIX_NAVN_LAGRES     = 12 * HOUR_IN_SECONDS;
 const AMENDO_TELLIX_TLF_GRENSE      = 10;
 const AMENDO_TELLIX_TLF_VINDU       = 15 * MINUTE_IN_SECONDS;
+/** Siste kjente gode rabattliste fra Tellix (1.4.45): ['tid' => …, 'grupper' => …]. */
+const AMENDO_TELLIX_GRUPPER_KOPI    = 'amendo_tellix_grupper_kopi';
+/** Versjonen kopien sist ble fylt for — så aktivering og oppgradering fyller den. */
+const AMENDO_TELLIX_KOPI_VERSJON    = 'amendo_tellix_kopi_versjon';
+/** Timesjobben som holder kopien fersk. */
+const AMENDO_TELLIX_GRUPPER_JOBB    = 'amendo_tellix_grupper_jobb';
 
 // 1.4.28: `_tellixGroupId` kan skrives og leses via wc/v3/customers (garcon-b2b
 // sin settTellixGruppe() og invitasjonen). Se includes/kundefelter.php.
@@ -118,30 +124,183 @@ function amendo_tellix_gruppenavn() {
     return $navn;
 }
 
+/*
+ * ── RABATTLISTA FRA TELLIX, MED SISTE KJENTE GODE KOPI (1.4.45) ────────────
+ *
+ * Fram til 1.4.44 var dette ett live Tellix-kall per forespørsel, uten noe å
+ * falle tilbake på. Feilet eller tømtes kallet, ble `$g` null i
+ * `amendo_tellix_svar()`, og da forsvant BÅDE `gruppe_navn` OG satsen:
+ * `rabatt/telefon` svarte 200 med `gruppe_id: 4` og `helsebygget: null`, selv
+ * om gruppen har 40 % på kategoriene 187/162/262.
+ *
+ * ⚠⚠ DET TRAFF FRONTENDEN TO GANGER. `/settings` bygger `kundegruppe_config`
+ * av NØYAKTIG samme liste, så reserven frontenden faller tilbake på var tom i
+ * samme øyeblikk som ruten sviktet. Målt på garcon.no 20.11.2026: nr.
+ * 93644327 kl. 09:44 ga `helsebygget: null` etter et Tellix-kall på 1870 ms;
+ * neste kall svarte riktig på 4 ms. Feilen kommer og går og kan treffe hvem
+ * som helst — den sier ingenting om kunden.
+ *
+ * ⚠⚠ FAIL-CLOSED UTEN KOPI. Finnes ingen lagret kopi, svarer vi som før: tom
+ * liste, og satsen blir `null`. En butikk som aldri har fått svar fra Tellix
+ * skal ikke få en oppdiktet rabatt.
+ *
+ * ⚠⚠ IKKE `amendo_helsebygget_grupper` SOM RESERVE. Den gamle lista sier
+ * `{"4": 40}` — 40 % på ALT. Den nye modellen for gruppe 4 er 0 % i grunnsats
+ * og 40 % på tre kategorier. Faller vi tilbake på den, gir vi rabatt på hele
+ * sortimentet. Heller ingen rabatt enn for mye.
+ *
+ * ⚠ Kopien venter ikke på at en kunde gjør et oppslag: den fylles ved
+ * aktivering og oppgradering, og friskes av timesjobben under.
+ */
+
 /** Aktive grupper fra Tellix, normalisert og nøklet på ID. Én gang per forespørsel. */
 function amendo_tellix_grupper() {
     static $svar = null;
     if ($svar !== null) return $svar;
     $svar = [];
     if (!amendo_tellix_tilgjengelig()) return $svar;
+    $lest = amendo_tellix_grupper_les();
+    if ($lest === null) return $svar = amendo_tellix_grupper_kopi('oppslaget feilet');
+    if (!$lest)         return $svar = amendo_tellix_grupper_kopi('tomt svar');
+    amendo_tellix_grupper_lagre($lest);
+    return $svar = $lest;
+}
+
+/**
+ * Ett ferskt kall mot Tellix. `null` = kallet feilet, `[]` = tomt svar.
+ *
+ * ⚠ Egen funksjon fordi `amendo_tellix_grupper()` memoiserer: timesjobben skal
+ * lese FERSKT, også når noe annet i samme forespørsel alt har spurt.
+ */
+function amendo_tellix_grupper_les() {
     try {
         $raa = call_user_func([AMENDO_TELLIX_KLASSE, 'get_tellix_discounts']);
     } catch (Throwable $e) {
         amendo_tellix_logg('get_tellix_discounts feilet (' . get_class($e) . ')');
-        return $svar;
+        return null;
     }
-    if (!is_array($raa) || !$raa) return $svar;
+    if (!is_array($raa) || !$raa) return [];
+    $ut   = [];
     $navn = amendo_tellix_gruppenavn();
     foreach ($raa as $id => $g) {
         if (!is_numeric($id) || (int) $id <= 0) continue;
-        $svar[(int) $id] = [
+        $ut[(int) $id] = [
             'id'         => (int) $id,
             'navn'       => (string) ($navn[(int) $id] ?? ''),
             'prosent'    => (float) (amendo_tellix_felt($g, 'discountPercent') ?? 0),
             'kategorier' => amendo_tellix_kategorier(amendo_tellix_felt($g, 'categories')),
         ];
     }
-    return $svar;
+    return $ut;
+}
+
+/** Kopien slik den er lagret: ['tid' => unixtid, 'grupper' => [...]]. */
+function amendo_tellix_kopi_les() {
+    $raa  = get_option(AMENDO_TELLIX_GRUPPER_KOPI, '');
+    $data = is_array($raa) ? $raa : json_decode((string) $raa, true);
+    if (!is_array($data)) return ['tid' => 0, 'grupper' => []];
+    return [
+        'tid'     => (int) ($data['tid'] ?? 0),
+        'grupper' => is_array($data['grupper'] ?? null) ? $data['grupper'] : [],
+    ];
+}
+
+/** Når ble kopien sist bekreftet mot Tellix? 0 = aldri. Vises i admin. */
+function amendo_tellix_kopi_tid() {
+    return amendo_tellix_kopi_les()['tid'];
+}
+
+/** Gruppene fra kopien, normalisert som et ferskt svar. Tom liste = fail-closed. */
+function amendo_tellix_grupper_kopi($grunn) {
+    $data = amendo_tellix_kopi_les()['grupper'];
+    if (!$data) {
+        amendo_tellix_logg("gruppelista: $grunn, og ingen lagret kopi — svarer uten satser");
+        return [];
+    }
+    $ut = [];
+    foreach ($data as $id => $g) {
+        if (!is_array($g) || (int) $id <= 0) continue;
+        $ut[(int) $id] = [
+            'id'         => (int) $id,
+            'navn'       => (string) ($g['navn'] ?? ''),
+            'prosent'    => (float) ($g['prosent'] ?? 0),
+            'kategorier' => is_array($g['kategorier'] ?? null) ? $g['kategorier'] : [],
+        ];
+    }
+    amendo_tellix_logg("gruppelista: $grunn — bruker siste kjente kopi (" . count($ut) . ' grupper)');
+    return $ut;
+}
+
+/**
+ * Lagrer kopien — men BARE når lista faktisk har endret seg.
+ *
+ * ⚠⚠ UTEN SAMMENLIGNINGEN BLIR DETTE EN SKRIVING PER FORESPØRSEL. Hver
+ * sidevisning som leser rabatten ville skrevet en option, og en option-skriving
+ * tømmer objektcachen for alle. Rabattlista endrer seg noen ganger i året.
+ *
+ * ⚠ `$bekreft` er for de DELIBERATE oppfriskningene (timesjobben, aktivering,
+ * oppgradering): de skriver tiden selv om lista er uendret, for det er den
+ * tiden admin viser. Forespørsler utenfra setter den aldri — ellers var vi
+ * tilbake til en skriving per oppslag.
+ *
+ * ⚠ Nøklene sorteres før sammenligningen: Tellix kan svare i vilkårlig
+ * rekkefølge, og to like lister i ulik rekkefølge ville ellers sett ut som en
+ * endring hver eneste gang.
+ */
+function amendo_tellix_grupper_lagre(array $grupper, $bekreft = false) {
+    if (!$grupper) return false;
+    ksort($grupper, SORT_NUMERIC);
+    foreach ($grupper as &$g) {
+        if (is_array($g['kategorier'] ?? null)) ksort($g['kategorier'], SORT_NUMERIC);
+    }
+    unset($g);
+    $lagret = amendo_tellix_kopi_les();
+    $likt   = wp_json_encode($lagret['grupper']) === wp_json_encode($grupper);
+    if ($likt && !$bekreft) return false;
+    $ny = wp_json_encode(['tid' => time(), 'grupper' => $grupper]);
+    if (!is_string($ny)) return false;
+    // ⚠ autoload `false`: kopien leses bare når Tellix svikter, og av admin.
+    update_option(AMENDO_TELLIX_GRUPPER_KOPI, $ny, false);
+    amendo_tellix_logg('gruppelista: kopien ' . ($likt ? 'bekreftet' : 'oppdatert') . ' (' . count($grupper) . ' grupper)');
+    return true;
+}
+
+/**
+ * Henter lista ferskt og bekrefter kopien. Timesjobben, aktivering og
+ * oppgradering bruker denne.
+ *
+ * ⚠ Et feilet kall rører IKKE kopien. Da står den forrige, og tiden i admin
+ * blir stående — som er nettopp signalet om at noe er galt med Tellix.
+ */
+function amendo_tellix_grupper_frisk($grunn) {
+    if (!amendo_tellix_tilgjengelig()) return false;
+    $lest = amendo_tellix_grupper_les();
+    if (!$lest) {
+        amendo_tellix_logg("gruppelista: oppfriskning ($grunn) ga ingenting — kopien står urørt");
+        return false;
+    }
+    amendo_tellix_grupper_lagre($lest, true);
+    return true;
+}
+
+// Timesjobben, og én oppfriskning ved aktivering og oppgradering.
+add_action(AMENDO_TELLIX_GRUPPER_JOBB, function() { amendo_tellix_grupper_frisk('planlagt jobb'); });
+
+add_action('init', 'amendo_tellix_grupper_oppstart');
+
+/**
+ * ⚠ Oppfriskningen ved ny versjon gjøres som en ENGANGSJOBB, ikke her og nå:
+ * `init` kjører på en hvilken som helst forespørsel, og en tilfeldig kunde
+ * skal ikke vente på et Tellix-kall på 1870 ms. WP-cron plukker den opp på
+ * neste sidevisning.
+ */
+function amendo_tellix_grupper_oppstart() {
+    if (!wp_next_scheduled(AMENDO_TELLIX_GRUPPER_JOBB)) {
+        wp_schedule_event(time() + 60, 'hourly', AMENDO_TELLIX_GRUPPER_JOBB);
+    }
+    if ((string) get_option(AMENDO_TELLIX_KOPI_VERSJON, '') === AMENDO_SETTINGS_VERSION) return;
+    update_option(AMENDO_TELLIX_KOPI_VERSJON, AMENDO_SETTINGS_VERSION, false);
+    wp_schedule_single_event(time(), AMENDO_TELLIX_GRUPPER_JOBB);
 }
 
 // ── Oppslag: vår egen kopi av kundelista (1.4.16) ───────────────────────────

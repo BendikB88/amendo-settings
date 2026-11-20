@@ -25,6 +25,8 @@ if (get_option('amendo_test_tellix') === '1' && !class_exists(__NAMESPACE__ . '\
         }
 
         public static function get_tellix_discounts() {
+            // 1.4.45: Tellix nede midt i et rabattoppslag.
+            if (get_option('amendo_test_tellix_rabattkast') === '1') throw new \RuntimeException('Tellix nede');
             $ut = [];
             foreach (self::grupper() as $g) {
                 if (isset($g['active']) && !$g['active']) continue;

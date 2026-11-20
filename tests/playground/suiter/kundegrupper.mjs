@@ -193,6 +193,69 @@ const valg = d.querySelector('select[name="kundegrupper[rader][4][gjelder]"]');
 valg.value = 'ingen'; valg.dispatchEvent(new w.Event('change', { bubbles: true }));
 sjekk('endret valg: tabellen lagres', flagg() === '1');
 
+// ── 1.4.45: siste kjente gode kopi av rabattlista ──────────────────────────
+console.log('\n1.4.45: Tellix svikter — satsene skal ikke forsvinne');
+const kopi = (p) => get('/amendo-test/v1/v1445-kopi', p);
+await klargjor({ grupper: GRUPPER, rabattkast: null });
+await kopi({ fri: '90000001' });
+r = await telefon('90000001');
+sjekk('utgangspunkt: satsene er med', kats(r.json?.helsebygget?.kategorier) === forvent(NAV), r.json?.helsebygget);
+let k = await kopi();
+sjekk('kopien er lagret etter et vellykket oppslag', !!k.kopi?.['4']?.kategorier, k.kopi?.['4']);
+
+await klargjor({ grupper: [] });
+await kopi({ fri: '90000001' });
+r = await telefon('90000001');
+sjekk('tomt Tellix-svar: satsene står', r.json?.helsebygget?.prosent === 0 && kats(r.json?.helsebygget?.kategorier) === forvent(NAV), r.json?.helsebygget);
+sjekk('… og gruppenavnet står', r.json?.gruppe_navn === 'NAV Lillestrøm', r.json);
+const s45 = await settings();
+sjekk('… /settings beholder rabatten i kundegruppe_config',
+  s45.kundegruppe_config?.['4']?.rabatt?.prosent === 0 && kats(s45.kundegruppe_config?.['4']?.rabatt?.kategorier) === forvent(NAV),
+  s45.kundegruppe_config?.['4']);
+
+await klargjor({ grupper: GRUPPER, rabattkast: '1' });
+await kopi({ fri: '90000001' });
+r = await telefon('90000001');
+sjekk('Tellix kaster: satsene står', kats(r.json?.helsebygget?.kategorier) === forvent(NAV), r.json?.helsebygget);
+
+console.log('\n1.4.45: kopien skrives bare når lista er endret');
+await klargjor({ grupper: GRUPPER, rabattkast: null });
+await kopi({ nullstill: 1, fri: '90000001' });
+await telefon('90000001');
+await kopi({ fri: '90000005' });
+await telefon('90000005');
+await kopi({ fri: '90000006' });
+await telefon('90000006');
+k = await kopi();
+sjekk('tre uendrede oppslag → ingen skriving', k.skrivinger === 0, k.skrivinger);
+
+await klargjor({ grupper: GRUPPER.map(g => (g.id === 4 ? { ...g, discountPercent: 5 } : g)) });
+await kopi({ fri: '90000001' });
+await telefon('90000001');
+k = await kopi();
+sjekk('endret liste → nøyaktig én skriving', k.skrivinger === 1, k.skrivinger);
+sjekk('… og kopien har den nye satsen', Number(k.kopi?.['4']?.prosent) === 5, k.kopi?.['4']);
+
+console.log('\n1.4.45: kopien fylles ved aktivering, uten at noen har slått opp');
+await klargjor({ grupper: GRUPPER, rabattkast: null });
+k = await kopi({ slett: 1 });
+sjekk('utgangspunkt: ingen kopi', k.kopi === null, k.kopi);
+k = await kopi({ oppstart: 1 });
+sjekk('oppstart planlegger timesjobben', k.timesjobb > 0, k.timesjobb);
+sjekk('… og en engangsjobb med en gang', k.engangs >= 1, k.engangs);
+sjekk('… men gjør ikke kallet i forespørselen', k.kopi === null, k.kopi);
+k = await kopi({ kjor_jobb: 1 });
+sjekk('jobben fyller kopien — uten et eneste rabattoppslag', !!k.kopi?.['4']?.kategorier, k.kopi?.['4']);
+sjekk('… og tiden er satt, så admin kan vise den', k.tid > 0, k.tid);
+
+console.log('\n1.4.45: uten kopi er det fail-closed');
+await klargjor({ grupper: [] });
+await kopi({ slett: 1, fri: '90000001' });
+r = await telefon('90000001');
+sjekk('ingen kopi + Tellix tomt → helsebygget null, ingen oppdiktet sats', r.json?.helsebygget === null, r.json);
+sjekk('… men gruppe_id står igjen', r.json?.gruppe_id === 4, r.json);
+await klargjor({ grupper: GRUPPER });
+
 await klargjor({ moduler: null, tellix: null, helsebygget: null, kundegrupper: null, kundegrupper_ny: null, faktura: null, nullstill: true });
 await opt({ amendo_kasse_secret: null });
 ferdig();
