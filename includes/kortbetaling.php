@@ -206,6 +206,16 @@ function amendo_adyen_betal($request) {
         ],
     ], function($v) { return $v !== null && $v !== ''; });
 
+    /*
+     * ⚠⚠ BELØPET VI BA ADYEN TREKKE, LAGRET FØR KALLET. Ved /adyen-detaljer er
+     * ordretotalen den NÅVÆRENDE, og hele poenget med beløpssikringen er å
+     * oppdage at den har endret seg underveis. Uten dette tallet har vi ingen
+     * ting å sammenligne med når Adyen ikke selv sender `amount` tilbake — og
+     * det gjør `/payments/details` som regel ikke. Se includes/belopssikring.php.
+     */
+    amendo_belopssikring_forespurt($ordre, $ore, $valuta);
+    $ordre->save();
+
     $svar = amendo_kortbetaling_svar(\AOrder\Gateways\API\Adyen::api_call('/payments', $param));
     if (!$svar || empty($svar['resultCode'])) {
         return amendo_kortbetaling_kallfeil('adyen-betal', $svar);
@@ -331,8 +341,44 @@ function amendo_kortbetaling_splits(int $ore, string $ref) {
 }
 
 /**
+ * Beløpet som faktisk er i spill for denne betalingen, i øre.
+ *
+ * Rekkefølgen er ikke tilfeldig:
+ *  1. `amount` fra Adyen sitt svar — det bekreftede beløpet. Sikrest.
+ *  2. Beløpet vi ba Adyen trekke, lagret ved /adyen-betal. `/payments/details`
+ *     sender som regel ikke `amount`, og uten dette står sikringen av.
+ *
+ * ⚠ Returnerer `null` når ingen av delene finnes. Da er det ingenting å
+ * sammenligne, og det skal SIES — ikke skjules bak ordretotalen, som alltid
+ * ville stemt med seg selv.
+ */
+function amendo_kortbetaling_belop(WC_Order $ordre, array $svar) {
+    $verdi = $svar['amount']['value'] ?? null;
+    if (is_numeric($verdi) && (int) $verdi > 0) {
+        return [
+            'ore'    => (int) $verdi,
+            'valuta' => (string) ($svar['amount']['currency'] ?? $ordre->get_currency()),
+            'kilde'  => 'adyen',
+        ];
+    }
+    $forespurt = amendo_belopssikring_forespurt($ordre);
+    if ($forespurt) {
+        return [
+            'ore'    => $forespurt['ore'],
+            'valuta' => $forespurt['valuta'] !== '' ? $forespurt['valuta'] : $ordre->get_currency(),
+            'kilde'  => 'forespurt',
+        ];
+    }
+    return null;
+}
+
+/**
  * Tolker resultCode fra /payments og /payments/details, oppdaterer ordren og
- * svarer kassen: { resultCode, action?, pspReference?, refusalReason? }.
+ * svarer kassen: { resultCode, amount?, action?, pspReference?, refusalReason? }.
+ *
+ * ⚠ `amount` er med fra 1.4.44, og det er frontendens beløpssikring som leser
+ * den (`lib/belopssikring.ts` → `lesBeløp(data.amount)`). Fjernes den, står
+ * sikringsnettet der av uten at noe feiler.
  */
 function amendo_kortbetaling_resultat(WC_Order $ordre, array $svar, int $ore) {
     $kode = (string) $svar['resultCode'];
@@ -340,17 +386,39 @@ function amendo_kortbetaling_resultat(WC_Order $ordre, array $svar, int $ore) {
     $ut   = ['resultCode' => $kode];
     if ($psp !== '') $ut['pspReference'] = $psp;
 
+    $belop = amendo_kortbetaling_belop($ordre, $svar);
+    if ($belop) {
+        // Til frontendens sikring, i øre — som Adyen oppgir det.
+        $ut['amount'] = ['value' => $belop['ore'], 'currency' => $belop['valuta']];
+        /*
+         * ⚠ LAGRES BARE NÅR NOE FAKTISK ER BETALT. For `Refused` er beløpet
+         * fortsatt kjent (vi ba Adyen trekke det), men ingenting er trukket —
+         * og et `_amendo_betalt_ore` på en ubetalt ordre ville fortalt den som
+         * ser på ordren i wp-admin det motsatte av sannheten. Samme liste som
+         * frontenden bruker (`BETALT_KODER` i lib/belopssikring.ts).
+         */
+        if (in_array($kode, ['Authorised', 'Received', 'Pending'], true)) {
+            amendo_belopssikring_lagre($ordre, $belop['ore'], $belop['valuta'], 'kort/' . $belop['kilde']);
+        }
+    } elseif ($kode === 'Authorised') {
+        amendo_betaling_logg(
+            'beløpssikring: ordre ' . $ordre->get_id() . ' autorisert uten beløp — hverken Adyen-svaret eller '
+            . 'et lagret forespurt beløp hadde ett. Ingen kontroll mot ordretotalen.'
+        );
+    }
+
     switch ($kode) {
         case 'Authorised':
             // Beløpet Adyen autoriserte, når svaret har det, skal være ordrens.
-            $autorisert = $svar['amount']['value'] ?? null;
-            if ($autorisert !== null && (int) $autorisert !== $ore) {
+            $autorisert = $belop ? $belop['ore'] : null;
+            $valutaAvvik = $belop && $belop['valuta'] !== '' && $belop['valuta'] !== $ordre->get_currency();
+            if ($autorisert !== null && ((int) $autorisert !== $ore || $valutaAvvik)) {
                 // ⚠ Beløpssikring (1.4.41): «On hold» med notat, ALDRI
                 // «Behandler» — se includes/belopssikring.php. Transaksjonen
                 // lagres, så butikken finner den i Adyen.
                 $ordre->update_meta_data('_adyen_pspReference', $psp);
                 if ($psp !== '') $ordre->set_transaction_id($psp);
-                $ordre->update_status('on-hold', amendo_belopssikring_on_hold($ordre, (int) $autorisert, $ore, 'kort, headless-kasse'));
+                $ordre->update_status('on-hold', amendo_belopssikring_on_hold($ordre, (int) $autorisert, $ore, 'kort, headless-kasse (' . $belop['kilde'] . ')'));
                 break;
             }
             if ($ordre->needs_payment()) {

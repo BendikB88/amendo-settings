@@ -191,6 +191,11 @@ namespace {
                 'transaksjon' => $o->get_transaction_id(),
                 'metode'      => $o->get_payment_method(),
                 'psp'         => $o->get_meta('_adyen_pspReference'),
+                // 1.4.44: beløpet beløpssikringen har lagret.
+                'betalt_ore'    => $o->get_meta('_amendo_betalt_ore'),
+                'betalt_valuta' => $o->get_meta('_amendo_betalt_valuta'),
+                'betalt_kilde'  => $o->get_meta('_amendo_betalt_kilde'),
+                'forespurt_ore' => $o->get_meta('_amendo_belop_forespurt_ore'),
                 'notater'     => array_map(function($n) { return $n->content; }, wc_get_order_notes(['order_id' => $o->get_id()])),
             ];
         }]);

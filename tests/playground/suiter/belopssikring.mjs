@@ -4,6 +4,16 @@ import { sjekk, ferdig, get, B } from '../lib/felles.mjs';
 
 const ordre = () => get('/amendo-test/v1/kortordre', { headless: true });
 const status = id => get(`/amendo-test/v1/kortordre-status&id=${id}`);
+const webhookValuta = async (id, verdi, valuta) => {
+  const r = await fetch(B + '/aorder/v1/amendo-adyen', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ notificationItems: [{ NotificationRequestItem: {
+      eventCode: 'AUTHORISATION', success: 'true', merchantReference: `shop.test/${id}`,
+      pspReference: `PSPV${id}`, amount: { value: verdi, currency: valuta },
+    } }] }),
+  });
+  return r.status;
+};
 const webhook = async (id, verdi, success = 'true', eventCode = 'AUTHORISATION') => {
   const r = await fetch(B + '/aorder/v1/amendo-adyen', {
     method: 'POST',
@@ -58,5 +68,23 @@ await fetch(B + '/aorder/v1/amendo-adyen', {
 });
 sjekk('riktig beløp på den ene → «Behandler»', (await status(a)).status === 'processing');
 sjekk('feil beløp på den andre → «On hold»', (await status(b)).status === 'on-hold');
+
+console.log('\n1.4.44: beløpet lagres på ordren (Vipps og Klarna går bare denne veien)');
+({ id } = await ordre());
+await webhook(id, 23530);
+s = await status(id);
+sjekk('webhook: beløpet står på ordren', Number(s.betalt_ore) === 23530, s);
+sjekk('… med valuta', s.betalt_valuta === 'NOK', s);
+sjekk('… og kilde', s.betalt_kilde === 'adyen-webhook', s);
+
+console.log('\n1.4.44: valutaen teller med');
+({ id } = await ordre());
+await webhookValuta(id, 23530, 'EUR');
+s = await status(id);
+sjekk('23530 EUR mot en NOK-ordre → «On hold»', s.status === 'on-hold', s);
+sjekk('… med notat', s.notater.some(n => n.includes('Beløpssikring')), s.notater);
+({ id } = await ordre());
+await webhookValuta(id, 23530, 'NOK');
+sjekk('samme beløp i NOK → «Behandler»', (await status(id)).status === 'processing');
 
 ferdig();

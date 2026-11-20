@@ -174,5 +174,27 @@ await opt({ stub_detaljer_svar: 'wp_error' });
 r = await post('adyen-detaljer', { ordre_id: id, details: { redirectResult: 'abc' } });
 sjekk('Adyen-feil → 502 JSON', r.status === 502 && erJson(r), r);
 
+console.log('\nBeløpet videre til kassen (1.4.44)');
+await opt({ stub_kort_svar: 'authorised', stub_detaljer_svar: 'authorised' });
+({ id } = await ordre());
+r = await post('adyen-betal', betal(id));
+sjekk('adyen-betal svarer med amount', Number(r.json?.amount?.value) === 23530, r.json);
+sjekk('… i ordrens valuta', r.json?.amount?.currency === 'NOK', r.json);
+s = await status(id);
+sjekk('… beløpet lagret på ordren, merket som fra Adyen', Number(s.betalt_ore) === 23530 && s.betalt_kilde === 'kort/adyen', s);
+sjekk('… og det forespurte beløpet er lagret ved betalingsstart', Number(s.forespurt_ore) === 23530, s);
+
+await opt({ stub_kort_svar: 'challenge' });
+({ id } = await ordre());
+await post('adyen-betal', betal(id));
+await opt({ stub_kort_ordre: id, stub_detaljer_svar: 'authorised', stub_kort_svar: 'authorised' });
+r = await post('adyen-detaljer', { ordre_id: id, details: { threeDSResult: 'eyJ0cmFuc1N0YXR1cyI6IlkifQ==' } });
+sjekk('adyen-detaljer svarer med amount selv om Adyen ikke sendte det', Number(r.json?.amount?.value) === 23530, r.json);
+s = await status(id);
+sjekk('… lagret med kilde «forespurt»', s.betalt_kilde === 'kort/forespurt', s);
+sjekk('… og ordren er betalt som før', s.status === 'processing', s);
+
+// Rydder til slutt, etter alle provene — den nuller kassens secret.
 await opt({ amendo_kasse_secret: null, stub_kort_svar: null, stub_detaljer_svar: null });
+
 ferdig();
