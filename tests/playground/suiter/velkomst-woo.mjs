@@ -124,12 +124,13 @@ await minKonto(false);
 
 // ── Med Frontend-URL: som før ───────────────────────────────────────────────
 console.log('\nMed Frontend-URL: som før');
-await opt({ amendo_frontend_url: 'https://front.example.no' });
+// 1.4.46: /sett-passord bare med «Send passordlenker til fronten» på (se suiten passordlenker).
+await opt({ amendo_frontend_url: 'https://front.example.no', amendo_b2b_passordlenker: '1' });
 await klargjor({ kunder: [...KUNDER, k('W3', 'w3@woo1443.no', '912000003', 'Woo Tre AS'), k('W4', 'w4@woo1443.no', '912000004', 'Woo Fire AS'), k('W5', 'w5@woo1443.no', '912000005', 'Woo Fem AS')], liste_slett: true });
 await jobb();
 const l5 = ((await epostTil('w5@woo1443.no'))[0]?.html || '').match(/href="([^"]+)"/)?.[1]?.replace(/&#038;|&amp;/g, '&') || '';
 sjekk('lenken: <Frontend-URL>/sett-passord?key=…&login=…', l5.startsWith('https://front.example.no/sett-passord?key=') && !l5.includes('lost-password'), l5);
 
 await handling({ b2b_auto: 'lagre' });
-await opt({ amendo_frontend_url: null, amendo_test_epost_fang: null });
+await opt({ amendo_frontend_url: null, amendo_test_epost_fang: null, amendo_b2b_passordlenker: '' });
 ferdig();

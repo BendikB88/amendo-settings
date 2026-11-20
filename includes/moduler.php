@@ -176,6 +176,73 @@ function amendo_moduler_migrer_1423() {
 }
 amendo_moduler_migrer_1423();
 
+/**
+ * 1.4.46, én gang per butikk: bryteren «Send passordlenker til fronten»
+ * (`amendo_b2b_passordlenker`, se includes/moduler/b2b-tellix-bedrifter.php).
+ *
+ * Fra 1.4.29 til 1.4.45 gikk «Glemt passord» og velkomst-e-posten ALLTID til
+ * <Frontend-URL>/sett-passord når B2B var på og Frontend-URL satt. En butikk
+ * med en front uten den siden fikk 404 i e-posten. Bryteren settes derfor slik
+ * butikken hadde det før oppdateringen, så det er riktig fra første forespørsel:
+ *   - fra 1.4.29 eller nyere: på (ingen endring),
+ *   - fra en eldre versjon eller ny installasjon: av (WordPress sin egen lenke
+ *     og ett døgn, som før).
+ *
+ * ⚠ Pluginen har aldri lagret hvilken versjon den kom fra (fra nå:
+ * `amendo_settings_versjon`). Derfor:
+ *   1. WordPress sin oppdateringssjekk (`update_plugins`, `checked`) har
+ *      versjonen fra før, når den ikke er tømt (en opplasting i wp-admin
+ *      tømmer den).
+ *   2. Spor som bare 1.4.29 og nyere lager (amendo_moduler_spor_1429()).
+ * På når én av dem sier 1.4.29 eller nyere, ellers av. En butikk på 1.4.22
+ * kan ikke ha noen av sporene, så den blir alltid av.
+ *
+ * Kjøres før modulene lastes. ⚠ add_option(): finnes verdien (fra admin eller
+ * en samtidig forespørsel), røres den aldri. Den må kjøres før `init`, der
+ * 1.4.45-koden skriver `amendo_tellix_kopi_versjon`.
+ */
+function amendo_moduler_migrer_1446() {
+    if (get_option('amendo_b2b_passordlenker', null) !== null) return;
+    $fra = '';
+    $oppdatering = get_site_transient('update_plugins');
+    $fil = plugin_basename(AMENDO_SETTINGS_PATH . 'amendo-settings.php');
+    if (is_object($oppdatering) && isset($oppdatering->checked[$fil]) && is_string($oppdatering->checked[$fil])) {
+        $fra = $oppdatering->checked[$fil];
+    }
+    $ny_nok = ($fra !== '' && version_compare($fra, '1.4.29', '>=') && version_compare($fra, AMENDO_SETTINGS_VERSION, '<'))
+        || amendo_moduler_spor_1429();
+    add_option('amendo_b2b_passordlenker', $ny_nok ? '1' : '', '', true);
+}
+
+/** Finnes det noe bare 1.4.29 eller nyere lager? Se amendo_moduler_migrer_1446(). */
+function amendo_moduler_spor_1429() {
+    global $wpdb;
+    // Options fra 1.4.29 (Bedriftskunder fra Tellix), 1.4.31 (bedriftspakker),
+    // 1.4.34 (sesong, kontaktskjema), 1.4.39 og 1.4.40 (henting).
+    foreach (['amendo_b2b_auto', 'amendo_b2b_jobb', 'amendo_b2b_epost', 'amendo_b2b_velkomst', 'amendo_b2b_invitasjon',
+              'amendo_b2b_tellix_kjente', 'amendo_b2b_tellix_manuell', 'amendo_b2b_tellix_jobb_sist', 'amendo_bedriftspakker',
+              'amendo_sesongseksjoner', 'amendo_kontaktskjema_epost', 'amendo_henting_stengte_ukedager',
+              'amendo_henting_stengte_datoer', 'amendo_henting_ukedagsregler'] as $o) {
+        if (get_option($o, null) !== null) return true;
+    }
+    // 1.4.45 skriver sin versjon her ved init. Denne versjonens egen skriving teller ikke.
+    $kopi = (string) get_option('amendo_tellix_kopi_versjon', '');
+    if ($kopi !== '' && $kopi !== AMENDO_SETTINGS_VERSION && version_compare($kopi, '1.4.29', '>=')) return true;
+    // 1.4.38: en PIN lagret på nytt med wp_hash_password() (før: 64 hex-tegn).
+    $ansatte = json_decode((string) get_option('amendo_helsebygget_ansatte', '[]'), true);
+    foreach (is_array($ansatte) ? $ansatte : [] as $a) {
+        if (is_array($a) && !empty($a['pin']) && !preg_match('/^[0-9a-f]{64}$/', (string) $a['pin'])) return true;
+    }
+    // Brukere fra 1.4.29 (konto fra Tellix), 1.4.31/1.4.37/1.4.42 (bedriftspakker).
+    $nokler = ['_amendo_fra_tellix', '_amendo_bp_onske', '_amendo_bp_ref', '_amendo_bp_oppfolging', '_amendo_bp_egen'];
+    $sql = "SELECT 1 FROM {$wpdb->usermeta} WHERE meta_key IN (" . implode(',', array_fill(0, count($nokler), '%s')) . ') LIMIT 1';
+    return (bool) $wpdb->get_var($wpdb->prepare($sql, $nokler));
+}
+amendo_moduler_migrer_1446();
+
+// Versjonen som kjører, så neste migrering vet hvor butikken kom fra (1.4.46).
+if (get_option('amendo_settings_versjon') !== AMENDO_SETTINGS_VERSION) update_option('amendo_settings_versjon', AMENDO_SETTINGS_VERSION, true);
+
 foreach (amendo_moduler_aktive() as $nokkel) {
     $fil = amendo_moduler_alle()[$nokkel]['fil'];
     if ($fil) require_once AMENDO_SETTINGS_PATH . $fil;

@@ -419,6 +419,8 @@ add_action('amendo_admin_paneler', function() {
 
         <?php amendo_b2b_tellix_bedrifter_kort(); ?>
 
+        <?php amendo_b2b_passordlenker_kort(); // 1.4.46 ?>
+
         <?php amendo_b2b_flytt_kort(); ?>
 
         </div>

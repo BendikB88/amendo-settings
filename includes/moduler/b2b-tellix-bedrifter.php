@@ -61,6 +61,15 @@
  * «Passord endret» for kontoene fra Tellix heller når passordet settes i
  * WooCommerce sitt skjema (woocommerce_disable_password_change_notification).
  *
+ * 1.4.46 — bryteren «Send passordlenker til fronten» (`amendo_b2b_passordlenker`,
+ * eget kort i B2B → Bedrifter). /sett-passord og 7 dager gjelder nå bare når
+ * den er på. Av (med Frontend-URL satt): som vanlig WordPress — «Glemt
+ * passord» urørt, ett døgn, og velkomst-e-posten lenker til wp-login.php. En
+ * front uten /sett-passord (garcon-b2b master 81b9152) ga 404 i e-posten.
+ * Engangsmigreringen i includes/moduler.php setter den på for butikker som
+ * kommer fra 1.4.29 eller nyere, ellers av. Uten Frontend-URL gjelder den
+ * ikke (1.4.43 som før). Se amendo_b2b_passord_modus().
+ *
  * ⚠ Ingen kundedata i loggen — bare antall.
  */
 
@@ -414,21 +423,34 @@ function amendo_b2b_velkomst_tekster() {
 }
 
 /** <Frontend-URL>/sett-passord?key=…&login=…, eller '' uten frontend-URL. Nøkkelen er WordPress sin (bare a–z, A–Z, 0–9). */
+/**
+ * Hvordan passordlenkene lages (1.4.46):
+ *   'front' — Frontend-URL satt og bryteren «Send passordlenker til fronten»
+ *             på: <Frontend-URL>/sett-passord og 7 dager (som 1.4.29–1.4.45),
+ *   'wp'    — Frontend-URL satt og bryteren av: som vanlig WordPress
+ *             (wp-login.php, ett døgn, «Glemt passord» urørt),
+ *   'woo'   — Frontend-URL tom (vanlig tema, 1.4.43): WooCommerce sin
+ *             «Velg passord» og 7 dager. Bryteren gjelder ikke.
+ */
+function amendo_b2b_passord_modus() {
+    if (amendo_frontend_url() === '') return 'woo';
+    return amendo_b2b_bryter('passordlenker') ? 'front' : 'wp';
+}
+
 function amendo_b2b_sett_passord_lenke($login, $nokkel) {
-    $base = amendo_frontend_url();
-    if ($base === '') return '';
-    return untrailingslashit($base) . '/sett-passord?key=' . $nokkel . '&login=' . rawurlencode($login);
+    if (amendo_b2b_passord_modus() !== 'front') return '';
+    return untrailingslashit(amendo_frontend_url()) . '/sett-passord?key=' . $nokkel . '&login=' . rawurlencode($login);
 }
 
 /**
- * Lenken i velkomst-e-posten og invitasjonen: frontendens /sett-passord når
- * Frontend-URL er satt (som før), ellers WooCommerce sin «Velg passord»
- * (1.4.43), ellers wp-login.php. Se toppkommentaren.
+ * Lenken i velkomst-e-posten og invitasjonen: frontendens /sett-passord
+ * ('front'), WordPress sin egen ('wp'), ellers WooCommerce sin «Velg passord»
+ * (1.4.43) og uten Min konto-side wp-login.php. Se amendo_b2b_passord_modus().
  */
 function amendo_b2b_velkomst_lenke(WP_User $u, $nokkel) {
     $lenke = amendo_b2b_sett_passord_lenke($u->user_login, $nokkel);
     if ($lenke !== '') return $lenke;
-    if (function_exists('wc_get_page_id') && wc_get_page_id('myaccount') > 0 && ($min_konto = wc_get_page_permalink('myaccount'))) {
+    if (amendo_b2b_passord_modus() === 'woo' && function_exists('wc_get_page_id') && wc_get_page_id('myaccount') > 0 && ($min_konto = wc_get_page_permalink('myaccount'))) {
         return add_query_arg(['key' => $nokkel, 'id' => $u->ID, 'login' => rawurlencode($u->user_login)], wc_get_endpoint_url('lost-password', '', $min_konto));
     }
     return network_site_url('wp-login.php?action=rp&key=' . $nokkel . '&login=' . rawurlencode($u->user_login), 'login');
@@ -448,7 +470,7 @@ function amendo_b2b_velkomst_innhold(WP_User $u, $lenke) {
         $html .= '<p style="margin:0 0 16px">' . nl2br(esc_html($avsnitt)) . '</p>';
     }
     $html .= '<p style="margin:24px 0"><a href="' . esc_url($lenke) . '" style="display:inline-block;background:#222;color:#fff;text-decoration:none;padding:12px 24px;border-radius:6px">' . esc_html($erstatt($t['knapp'])) . '</a></p>';
-    $html .= '<p style="margin:0;font-size:13px;color:#666">Lenken virker i 7 dager. Fungerer ikke knappen, kopier denne adressen inn i nettleseren:<br>' . esc_html($lenke) . '</p>';
+    $html .= '<p style="margin:0;font-size:13px;color:#666">Lenken virker i ' . (amendo_b2b_passord_modus() === 'wp' ? 'ett døgn' : '7 dager') . '. Fungerer ikke knappen, kopier denne adressen inn i nettleseren:<br>' . esc_html($lenke) . '</p>';
     $html .= '</div>';
     return ['emne' => $erstatt($t['emne']), 'html' => $html];
 }
@@ -469,7 +491,11 @@ function amendo_b2b_velkomst_send($id) {
 // ── Tilbakestilling via frontenden ──────────────────────────────────────────
 
 // Velkomstlenken og «Glemt passord» gjelder i 7 dager (WordPress: ett døgn).
-add_filter('password_reset_expiration', function() { return AMENDO_B2B_NOKKEL_GYLDIG; });
+// 1.4.46: ikke når bryteren «Send passordlenker til fronten» er av og
+// Frontend-URL er satt — da som vanlig WordPress.
+add_filter('password_reset_expiration', function($sekunder) {
+    return amendo_b2b_passord_modus() === 'wp' ? $sekunder : AMENDO_B2B_NOKKEL_GYLDIG;
+});
 
 // «Glemt passord»: lenken i WordPress sin e-post går til frontendens
 // /sett-passord i stedet for wp-login.php. Uten Frontend-URL: som før. Hele
@@ -562,8 +588,42 @@ add_action('amendo_admin_etter_skjema', function() {
         <?php wp_nonce_field('amendo_b2b_auto'); ?>
         <input type="hidden" name="action" value="amendo_b2b_auto">
     </form>
+    <form id="amendo-b2b-passordlenker" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+        <?php wp_nonce_field('amendo_b2b_passordlenker'); ?>
+        <input type="hidden" name="action" value="amendo_b2b_passordlenker">
+    </form>
     <?php
 });
+
+// 1.4.46: bryteren «Send passordlenker til fronten». Eget skjema, så den
+// aldri lagres sammen med (eller tømmes av) kortet for Tellix-bedriftene.
+add_action('admin_post_amendo_b2b_passordlenker', function() {
+    if (!current_user_can(amendo_settings_kapabilitet())) wp_die('Ingen tilgang', 403);
+    check_admin_referer('amendo_b2b_passordlenker');
+    $p = wp_unslash($_POST);
+    update_option('amendo_b2b_passordlenker', !empty($p['b2b_passordlenker']) ? '1' : '', true);
+    wp_redirect(admin_url('admin.php?page=amendo-settings&b2b_passord=lagret#b2b'));
+    exit;
+});
+
+/** Kortet med bryteren. Vises med B2B på, også uten Tellix. */
+function amendo_b2b_passordlenker_kort() {
+    $frontend = amendo_frontend_url();
+    $pa = amendo_b2b_bryter('passordlenker');
+    ?>
+    <div class="amendo-card" id="b2b-passordlenker">
+        <h2>Passordlenker</h2>
+        <?php if (($_GET['b2b_passord'] ?? '') === 'lagret'): ?>
+            <div class="amendo-b2b-melding amendo-b2b-melding-ok">Lagret.</div>
+        <?php endif; ?>
+        <p><label><input type="checkbox" form="amendo-b2b-passordlenker" name="b2b_passordlenker" value="1"<?php checked($pa); ?>> Send passordlenker til fronten</label><br>
+            <span class="field-help">På: «Glemt passord» og velkomst-e-posten lenker til <?php echo esc_html($frontend !== '' ? untrailingslashit($frontend) . '/sett-passord' : '<Frontend-URL>/sett-passord'); ?>, og lenkene gjelder i 7 dager. ⚠ Fronten må ha den siden.
+            Av: WordPress sin egen lenke (wp-login.php) og ett døgn, som i vanlig WordPress.
+            <?php if ($frontend === ''): ?>Frontend-URL er tom, så bryteren gjelder ikke nå: lenkene går til WooCommerce sin «Velg passord» under Min konto.<?php endif; ?></span></p>
+        <p class="b2b-knapper"><button type="submit" form="amendo-b2b-passordlenker" class="amendo-btn-secondary">Lagre</button></p>
+    </div>
+    <?php
+}
 
 const AMENDO_B2B_AUTO_MELDINGER = [
     'lagret'           => ['ok', 'Innstillingene for bedriftskunder fra Tellix er lagret.'],
@@ -639,7 +699,11 @@ function amendo_b2b_tellix_bedrifter_kort() {
                     : ($sist['status'] === 'feil' ? 'fikk ikke hentet kundelista'
                     : sprintf('%d invitert, %d uten e-post, %d koblet, %d manuelt, %d feil', $sist['invitert'] ?? 0, $sist['opprettet'] ?? 0, $sist['koblet'] ?? 0, $sist['manuell'] ?? 0, $sist['feil'] ?? 0))); ?>.<?php endif; ?></span></p>
         <p><label><input type="checkbox" form="amendo-b2b-auto" name="b2b_bryter_epost" value="1"<?php checked(amendo_b2b_bryter('epost')); ?>> Send velkomst-e-post</label><br>
-            <span class="field-help">Lenken går til <?php echo esc_html($frontend !== '' ? untrailingslashit($frontend) . '/sett-passord' : 'WooCommerce sin «Velg passord» under Min konto (Frontend-URL er tom)'); ?>, der kunden velger passord.
+            <span class="field-help">Lenken går til <?php
+                $modus = amendo_b2b_passord_modus();
+                echo esc_html($modus === 'front' ? untrailingslashit($frontend) . '/sett-passord'
+                    : ($modus === 'wp' ? 'WordPress sin egen side for nytt passord (wp-login.php), fordi «Send passordlenker til fronten» er av'
+                    : 'WooCommerce sin «Velg passord» under Min konto (Frontend-URL er tom)')); ?>, der kunden velger passord.
             Logoen og {butikk} hentes fra Butikk-fanen.</span></p>
         <div class="amendo-field"><label for="b2b_velkomst_emne">Emne</label>
             <input type="text" id="b2b_velkomst_emne" form="amendo-b2b-auto" name="b2b_velkomst_emne" value="<?php echo esc_attr((string) ($lagret['emne'] ?? '')); ?>" placeholder="<?php echo esc_attr(AMENDO_B2B_VELKOMST_STANDARD['emne']); ?>"></div>

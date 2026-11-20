@@ -62,7 +62,9 @@ const TELLIX = { moduler: ['b2b'], tellix: '1', grupper: [{ id: 14, name: 'Bedri
   helsebygget: null, store_groups: null, kundegrupper: null, sov: null, kast: null, api_feil: null, side: null, faktura: null };
 
 await get('/amendo-test/v1/setup');
-await opt({ amendo_kasse_secret: SECRET, amendo_frontend_url: 'https://front.example.no', amendo_butikk_navn: 'Testbakeriet', amendo_butikk_logo_mork: 'https://cdn.example.no/logo-mork.png', amendo_test_epost_fang: '1' });
+// 1.4.46: /sett-passord og 7 dager bare med «Send passordlenker til fronten» på
+// (som butikkene som kommer fra 1.4.29–1.4.45). Av: suiten passordlenker.
+await opt({ amendo_kasse_secret: SECRET, amendo_frontend_url: 'https://front.example.no', amendo_butikk_navn: 'Testbakeriet', amendo_butikk_logo_mork: 'https://cdn.example.no/logo-mork.png', amendo_test_epost_fang: '1', amendo_b2b_passordlenker: '1' });
 await klargjor({ ...TELLIX, kunder: KUNDER, liste_slett: true, nullstill: true });
 await k1429({ nullstill: true, slett_epost: ['ekte@firma.no', 'ny1@bk.no', 'ny6@bk.no', 'finnes@bk.no'], brukere: [
   { epost: 'bedrift@bk.no' }, { epost: 'privat@bk.no' }, { epost: 'to@bk.no' }, { epost: 'annen@bk.no' }, { epost: 'falsk@bk.no' },
@@ -272,5 +274,5 @@ sjekk('handlingen finnes ikke', (await handling({ b2b_auto: 'torrkjor' })).finne
 
 await klargjor({ moduler: null, tellix: null, kundegrupper_ny: null, liste_slett: true });
 await k1429({ nullstill: true });
-await opt({ amendo_test_epost_fang: null });
+await opt({ amendo_test_epost_fang: null, amendo_b2b_passordlenker: '' });
 ferdig();
