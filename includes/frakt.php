@@ -358,8 +358,14 @@ function amendo_frakt_beregn(array $inn) {
         $pakker = $wc->shipping()->get_packages();
         $pakke  = $pakker ? reset($pakker) : null;
 
-        $alternativer = $pakke ? amendo_frakt_alternativer($pakke['rates'] ?? []) : [];
         $gratis = $pakke ? amendo_frakt_gratisgrense($pakke) : ['grense' => null, 'gjenstaar' => null];
+        // 1.4.47: Holio Shipping har grensen på sine egne fraktvalg (includes/frakt-holio.php).
+        // Laveste grense vinner, som mellom flere free_shipping-metoder.
+        $holio = $pakke ? amendo_frakt_holio_gratisgrense($pakke) : ['grense' => null, 'gjenstaar' => null, 'per_rate' => []];
+        if ($holio['grense'] !== null && ($gratis['grense'] === null || $holio['grense'] < $gratis['grense'])) {
+            $gratis = ['grense' => $holio['grense'], 'gjenstaar' => $holio['gjenstaar']];
+        }
+        $alternativer = $pakke ? amendo_frakt_alternativer($pakke['rates'] ?? [], $holio['per_rate']) : [];
 
         $svar = [
             'valuta'               => get_woocommerce_currency(),
@@ -466,8 +472,11 @@ function amendo_frakt_variantegenskaper(WC_Product $variant) {
     return $egenskaper;
 }
 
-/** @param WC_Shipping_Rate[] $rater */
-function amendo_frakt_alternativer(array $rater) {
+/**
+ * @param WC_Shipping_Rate[] $rater
+ * @param array $holio_grenser Rate-ID => Holio-grense (1.4.47, se includes/frakt-holio.php).
+ */
+function amendo_frakt_alternativer(array $rater, array $holio_grenser = []) {
     $desimaler = wc_get_price_decimals();
 
     $har_gratis = false;
@@ -506,9 +515,20 @@ function amendo_frakt_alternativer(array $rater) {
             'mva'           => round($mva, $desimaler),
             'pris_inkl_mva' => round($eks + $mva, $desimaler),
             'meta'          => (object) $meta,
+            // 1.4.47: beløpet som gjør akkurat dette alternativet gratis, eller null.
+            'gratis_frakt_grense' => amendo_frakt_rategrense($rate, $holio_grenser),
         ];
     }
     return $ut;
+}
+
+/** Grensen for én rate: WooCommerces free_shipping med beløpskrav, eller Holios fraktvalg. */
+function amendo_frakt_rategrense(WC_Shipping_Rate $rate, array $holio_grenser) {
+    if (array_key_exists($rate->get_id(), $holio_grenser)) return $holio_grenser[$rate->get_id()];
+    if ($rate->get_method_id() !== 'free_shipping') return null;
+    $metode = WC_Shipping_Zones::get_shipping_method($rate->get_instance_id());
+    if (!$metode || !in_array($metode->requires ?? '', ['min_amount', 'either'], true)) return null;
+    return round((float) wc_format_decimal($metode->min_amount), wc_get_price_decimals());
 }
 
 /**

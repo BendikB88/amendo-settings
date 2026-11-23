@@ -2,18 +2,19 @@
 /**
  * Plugin Name: Amendo Innstillinger
  * Description: Innstillinger for butikk, design, kontakt, avdelinger og meny
- * Version: 1.4.46
+ * Version: 1.4.47
  * Author: Amendo
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('AMENDO_SETTINGS_VERSION', '1.4.46');
+define('AMENDO_SETTINGS_VERSION', '1.4.47');
 define('AMENDO_SETTINGS_PATH', plugin_dir_path(__FILE__));
 define('AMENDO_SETTINGS_URL', plugin_dir_url(__FILE__));
 
 require_once AMENDO_SETTINGS_PATH . 'includes/forside.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/frakt.php';
+require_once AMENDO_SETTINGS_PATH . 'includes/frakt-holio.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/cargonizer.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/hemmeligheter.php';
 require_once AMENDO_SETTINGS_PATH . 'includes/revalidering.php';

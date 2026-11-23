@@ -19,7 +19,7 @@ sjekk('valuta NOK', r.json.valuta === 'NOK');
 sjekk('ingen Set-Cookie', !r.h.get('set-cookie'), r.h.get('set-cookie'));
 sjekk('unntatt: ingen X-RateLimit-Remaining', r.h.get('x-ratelimit-remaining') === null);
 sjekk('nøkler i svaret', JSON.stringify(Object.keys(r.json)) === JSON.stringify(['valuta', 'alternativer', 'gratis_frakt_grense', 'gjenstaar_til_gratis', 'avviste_varer']), Object.keys(r.json));
-sjekk('nøkler per alternativ', JSON.stringify(Object.keys(fr || {})) === JSON.stringify(['id', 'metode', 'navn', 'pris_eks_mva', 'mva', 'pris_inkl_mva', 'meta']), Object.keys(fr || {}));
+sjekk('nøkler per alternativ', JSON.stringify(Object.keys(fr || {})) === JSON.stringify(['id', 'metode', 'navn', 'pris_eks_mva', 'mva', 'pris_inkl_mva', 'meta', 'gratis_frakt_grense']), Object.keys(fr || {}));
 
 console.log('\nOver grensen (4 × 250 = 1000)');
 r = await frakt({ varer: [{ product_id: ids.brod, antall: 4 }], land: 'NO', postnummer: '0150' }, med);
